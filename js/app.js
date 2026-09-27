@@ -19,7 +19,8 @@ const el = {
   meta: $('meta'), seed: $('seed'), feed: $('feed'), banner: $('banner'),
   pause: $('btn-pause'), speed: $('btn-speed'), next: $('btn-next'),
   roster: $('roster'), recent: $('recent'), settings: $('settings'),
-  sound: $('set-sound'), bars: $('set-bars'), full: $('set-full'), hide: $('set-hide'), version: $('version'),
+  sound: $('set-sound'), bars: $('set-bars'), full: $('set-full'), hide: $('set-hide'), install: $('set-install'),
+  version: $('version'),
 };
 // Side panels: at most one is open at a time, toggled by its control-bar button.
 const panels = {
@@ -332,6 +333,41 @@ setSwitch(el.bars, renderer.showBars);
 setSwitch(el.full, false);
 el.version.textContent = `v${VERSION} · built ${new Date(BUILT).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
 el.version.title = BUILT;
+
+// Install: Chromium browsers hand us a deferred prompt; iOS Safari has no install API,
+// so there the row explains Share → Add to Home Screen instead. Elsewhere (Firefox
+// desktop) there's no way to install, so the row stays hidden, as it does once the
+// app is running installed. Checked once at startup: in Chrome, display-mode
+// "fullscreen" also matches while a tab is in element fullscreen.
+let installPrompt = null;
+const runningInstalled = navigator.standalone === true ||
+  matchMedia('(display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui)').matches;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function renderInstall() {
+  const hint = el.install.querySelector('small');
+  if (installPrompt) hint.textContent = 'adds it to your home screen or desktop; works offline';
+  else if (isIOS) hint.textContent = 'in Safari, tap Share, then Add to Home Screen';
+  el.install.hidden = runningInstalled || (!installPrompt && !isIOS);
+}
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  renderInstall();
+});
+window.addEventListener('appinstalled', () => {
+  installPrompt = null;
+  el.install.hidden = true;
+});
+el.install.addEventListener('click', async () => {
+  if (!installPrompt) return;
+  const prompt = installPrompt;
+  installPrompt = null; // a prompt can only be shown once
+  prompt.prompt();
+  const { outcome } = await prompt.userChoice;
+  if (outcome === 'accepted') el.install.hidden = true;
+  else renderInstall();
+});
+renderInstall();
 
 window.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;

@@ -1,6 +1,6 @@
 {
   "name": "random-space-battles",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "description": "Endless procedurally generated space fleet battles, installable as an offline PWA.",

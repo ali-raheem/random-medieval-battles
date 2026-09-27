@@ -25,7 +25,7 @@ Use the browser's "Install app" / "Add to Home Screen" for a fullscreen app.
 | `N` | Skip to a new battle |
 | `R` | Fleet roster: every design and its generated weapons |
 | `L` | Recent battles: the last 5 you watched, with summary, replay and copy-link |
-| `S` | Settings: sound, health bars, fullscreen, hide interface, version |
+| `S` | Settings: install app, sound, health bars, fullscreen, hide interface, version |
 | `B` | Toggle health/shield bars |
 | `H` | Hide the whole HUD (tap the screen to bring it back) |
 | `M` | Sound on/off (remembered) |
