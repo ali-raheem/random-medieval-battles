@@ -1,11 +1,13 @@
 :root {
-  --bg: #03040a;
-  --panel: rgba(8, 12, 26, 0.72);
-  --edge: rgba(140, 170, 255, 0.22);
-  --text: #d6def5;
-  --dim: #7d88a8;
-  --accent: #7fb8ff;
-  --font: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace;
+  --bg: #16110b;
+  --panel: rgba(28, 21, 12, 0.78);
+  --edge: rgba(232, 200, 140, 0.24);
+  --text: #f0e6d0;
+  --dim: #b0a080;
+  --accent: #e8c26a;
+  --accent-bg: rgba(232, 194, 106, 0.16);
+  --accent-hover: rgba(232, 194, 106, 0.1);
+  --font: 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, 'Times New Roman', serif;
 }
 
 * { box-sizing: border-box; }
@@ -16,7 +18,7 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.4 var(--font);
+  font: 14px/1.4 var(--font);
   -webkit-user-select: none;
   user-select: none;
 }
@@ -63,7 +65,7 @@ button {
   vertical-align: middle;
 }
 
-/* Fleet strength header */
+/* Army strength header */
 #teams {
   display: flex;
   gap: 12px;
@@ -82,26 +84,33 @@ button {
 }
 .team.out { opacity: 0.45; }
 .team .name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--c);
   font-weight: 700;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
+.team .name > span { overflow: hidden; text-overflow: ellipsis; }
+.shield { width: 15px; height: 18px; flex: none; }
 .team .sub { color: var(--dim); font-size: 11px; display: flex; justify-content: space-between; gap: 8px; }
 .team .bar { height: 4px; background: rgba(255, 255, 255, 0.08); border-radius: 2px; margin-top: 5px; overflow: hidden; }
 .team .bar > i { display: block; height: 100%; background: var(--c); transition: width 0.3s; }
 
 #meta {
-  text-align: center;
+  width: fit-content;
+  margin: 6px auto 0;
+  padding: 1px 10px;
+  border-radius: 10px;
+  background: var(--panel);
   color: var(--dim);
   font-size: 11px;
-  margin-top: 6px;
+  text-align: center;
 }
 #seed { color: var(--dim); pointer-events: auto; text-decoration: underline dotted; padding: 0; }
 #seed:hover { color: var(--text); }
 
-/* Kill feed */
+/* Battle feed */
 #feed {
   position: absolute;
   left: max(16px, env(safe-area-inset-left));
@@ -173,9 +182,9 @@ button {
   font-size: 13px;
   font-weight: 700;
 }
-#controls button[aria-pressed="true"] { background: rgba(127, 184, 255, 0.16); color: var(--accent); }
+#controls button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); }
 @media (hover: hover) {
-  #controls button:hover { background: rgba(127, 184, 255, 0.1); }
+  #controls button:hover { background: var(--accent-hover); }
 }
 #controls button:focus-visible, .panel button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
@@ -203,15 +212,16 @@ button {
   -webkit-user-select: text;
   user-select: text;
 }
-#roster h2 { font-size: 13px; margin: 8px 0 2px; color: var(--c); }
+#roster h2 { font-size: 14px; margin: 8px 0 2px; color: var(--c); display: flex; align-items: center; gap: 6px; }
 #roster h2:first-child { margin-top: 0; }
 #roster .tech { color: var(--dim); font-size: 11px; margin-bottom: 6px; }
 #roster .design { margin: 6px 0 8px; padding-left: 8px; border-left: 1px solid var(--edge); }
 #roster .design b { color: var(--text); }
 #roster .stats { color: var(--dim); font-size: 11px; }
+#roster .kind { color: var(--dim); font-size: 11px; }
+#roster .regs { color: var(--dim); font-size: 10px; font-style: italic; margin-top: 2px; }
 #roster ul { margin: 2px 0 0; padding: 0; list-style: none; }
 #roster li { font-size: 11px; color: var(--dim); }
-#roster li .sw { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--wc); margin-right: 6px; box-shadow: 0 0 6px var(--wc); }
 #roster li .wn { color: var(--text); }
 
 /* Recent battles */
@@ -240,7 +250,7 @@ button {
   border-radius: 5px;
 }
 .past .actions .icon { width: 14px; height: 14px; }
-.past .actions button:hover { background: rgba(127, 184, 255, 0.16); }
+.past .actions button:hover { background: var(--accent-bg); }
 .past .seed-link { color: var(--dim); font-size: 11px; margin-left: auto; }
 .past .seed-link:hover { color: var(--text); }
 
@@ -260,7 +270,7 @@ button {
 #settings .row > span { flex: 1; }
 #settings .row small { display: block; color: var(--dim); font-size: 10px; }
 @media (hover: hover) {
-  #settings .row:hover { background: rgba(127, 184, 255, 0.1); }
+  #settings .row:hover { background: var(--accent-hover); }
 }
 .switch {
   position: relative;
@@ -282,7 +292,7 @@ button {
   background: var(--dim);
   transition: transform 0.2s, background 0.2s;
 }
-[aria-checked="true"] > .switch { background: rgba(127, 184, 255, 0.35); }
+[aria-checked="true"] > .switch { background: rgba(232, 194, 106, 0.35); }
 [aria-checked="true"] > .switch::after { transform: translateX(14px); background: var(--accent); }
 #settings .keys {
   display: grid;

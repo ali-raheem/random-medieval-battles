@@ -24,5 +24,5 @@ test('the manifest pins its app id instead of deriving it from start_url', () =>
   const manifest = JSON.parse(readFileSync(new URL('manifest.webmanifest', root), 'utf8'));
   // Must stay exactly this: it matches the id installed copies already have, and
   // changing it makes browsers treat the app as a different one.
-  assert.equal(manifest.id, '/rsb/index.html');
+  assert.equal(manifest.id, '/rmb/index.html');
 });

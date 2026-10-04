@@ -2,33 +2,33 @@
 // the end-of-battle summary and its seed so it can be replayed or shared.
 // DOM-free apart from the storage handle, which callers may pass in (tests do).
 
-const KEY = 'rsb.recent';
+const KEY = 'rmb.recent';
 export const RECENT_MAX = 5;
 
 // The victory-banner summary for a battle. `skipped` marks one left before it ended.
 export function summarizeBattle(state, { skipped = false } = {}) {
   const teams = state.teams.map((t) => ({ name: t.name, color: t.color }));
-  const destroyed = state.log.length;
+  const fallen = state.soldiers.filter((s) => !s.alive && !s.fled).length;
   if (skipped) {
     return {
       seed: state.seed,
       kicker: 'SKIPPED',
       title: teams.map((t) => t.name).join(' vs '),
       color: null,
-      sub: `left after ${Math.round(state.time)}s · ${destroyed} destroyed`,
+      sub: `left after ${Math.round(state.time)}s · ${fallen} fallen`,
       teams,
     };
   }
   const w = state.winner;
-  const ace = state.ships.reduce((best, s) => (s.kills > (best?.kills ?? 0) ? s : best), null);
-  const parts = [];
-  if (w) parts.push(`${state.ships.filter((s) => s.alive && s.team === w.index).length} ships remain`);
-  parts.push(`${destroyed} destroyed in ${Math.round(state.endT)}s`);
-  if (ace) parts.push(`ace: ${ace.name} (${ace.kills} kills)`);
+  const best = state.regiments.reduce((b, r) => (r.kills > (b?.kills ?? 0) ? r : b), null);
+  const parts = [`Battle of ${state.place}`];
+  if (w) parts.push(`${state.soldiers.filter((s) => s.alive && !s.routing && s.team === w.index).length} men stand`);
+  parts.push(`${fallen} fallen in ${Math.round(state.endT)}s`);
+  if (best) parts.push(`bravest: ${best.name} (${best.kills} slain)`);
   return {
     seed: state.seed,
-    kicker: state.timeout ? 'CEASEFIRE' : w ? 'VICTORY' : 'MUTUAL DESTRUCTION',
-    title: w ? w.name : 'No survivors',
+    kicker: state.timeout ? 'NIGHTFALL' : w ? 'VICTORY' : 'NO VICTOR',
+    title: w ? w.name : 'The field is empty',
     color: w?.color ?? null,
     sub: parts.join(' · '),
     teams,

@@ -2,7 +2,8 @@
 
 import { createBattle, step, teamStats, TIME_LIMIT } from './sim.js';
 import { randomSeed } from './rng.js';
-import { WEAPON_TYPES } from './gen.js';
+import { BONUS, UNIT_TYPES } from './gen.js';
+import { heraldryShapes } from './heraldry.js';
 import { Renderer } from './render.js';
 import { SoundEngine } from './audio.js';
 import { summarizeBattle, addRecent, loadRecent, saveRecent } from './recent.js';
@@ -66,7 +67,7 @@ function newBattle(seed = randomSeed()) {
   feedSeen = 0;
   renderer.reset(state);
   history.replaceState(null, '', `#seed=${hex(seed)}`);
-  el.battleNo.textContent = `Battle ${battleCount}`;
+  el.battleNo.textContent = `Battle of ${state.place}`;
   el.seed.textContent = `seed ${hex(seed)}`;
   el.feed.replaceChildren();
   el.banner.hidden = true;
@@ -76,17 +77,31 @@ function newBattle(seed = randomSeed()) {
   placePanels();
 }
 
-// Panels open just below the fleet header, whose height depends on team count and width.
+// Panels open just below the army header, whose height depends on team count and width.
 function placePanels() {
   el.hud.style.setProperty('--hud-top', `${Math.ceil(el.meta.getBoundingClientRect().bottom) + 10}px`);
 }
 
 // --- HUD ---------------------------------------------------------------------------
 
+// A heraldic shield for the army header, drawn from the same shapes as the banners.
+function shieldSvg(team, where = 'h') {
+  const her = team.heraldry;
+  const id = `clip-${where}-${team.index}`;
+  const polys = heraldryShapes(her.pattern)
+    .map((poly) => `<polygon points="${poly.map(([u, v]) => `${u * 20 + 2},${v * 24 + 2}`).join(' ')}" fill="${her.metal}"/>`)
+    .join('');
+  const outline = 'M2 2h20v10c0 7-5 11.5-10 14C7 23.5 2 19 2 12z';
+  return `<svg class="shield" viewBox="0 0 24 28" aria-hidden="true">
+    <clipPath id="${id}"><path d="${outline}"/></clipPath>
+    <g clip-path="url(#${id})"><rect width="24" height="28" fill="${her.field}"/>${polys}</g>
+    <path d="${outline}" fill="none" stroke="rgba(0,0,0,0.6)" stroke-width="1.2"/></svg>`;
+}
+
 function buildTeams() {
   el.teams.innerHTML = state.teams.map((t) => `
     <div class="team" style="--c:${t.color}" data-team="${t.index}">
-      <div class="name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</div>
+      <div class="name" title="${escapeHtml(t.name)}">${shieldSvg(t)}<span>${escapeHtml(t.name)}</span></div>
       <div class="sub"><span>${escapeHtml(t.doctrine)}</span><span class="count"></span></div>
       <div class="bar"><i></i></div>
     </div>`).join('');
@@ -96,25 +111,29 @@ function updateHud() {
   const stats = teamStats(state);
   for (const s of stats) {
     const node = el.teams.querySelector(`[data-team="${s.team.index}"]`);
-    node.querySelector('.count').textContent = `${s.alive}/${s.total} ships`;
+    node.querySelector('.count').textContent = `${s.alive}/${s.total} men`;
     node.querySelector('.bar > i').style.width = `${(s.strength * 100).toFixed(1)}%`;
     node.classList.toggle('out', s.alive === 0);
   }
   const t = Math.floor(state.time);
   const left = Math.max(0, TIME_LIMIT - t);
   el.clock.textContent = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}` +
-    (left < 30 && !state.over ? ` (ceasefire in ${left}s)` : '');
+    (left < 30 && !state.over ? ` (nightfall in ${left}s)` : '');
 
   while (feedSeen < state.log.length) {
     const e = state.log[feedSeen++];
-    const victim = state.teams[e.victimTeam];
-    const killer = e.killerTeam !== null ? state.teams[e.killerTeam] : null;
+    const team = state.teams[e.team];
     const li = document.createElement('li');
-    li.style.setProperty('--c', victim.color);
-    li.style.setProperty('--kc', killer?.color ?? '#aaa');
-    li.innerHTML = killer
-      ? `<span class="k">${escapeHtml(e.killer)}</span> destroyed <span class="v">${escapeHtml(e.victim)}</span> <span class="w">(${escapeHtml(e.victimClass)}) · ${escapeHtml(e.weapon)}</span>`
-      : `<span class="v">${escapeHtml(e.victim)}</span> <span class="w">(${escapeHtml(e.victimClass)}) was destroyed</span>`;
+    li.style.setProperty('--c', team.color);
+    const name = `<span class="v">${escapeHtml(e.name)}</span>`;
+    if (e.type === 'charge') {
+      li.style.setProperty('--kc', state.teams[e.targetTeam].color);
+      li.innerHTML = `${name} <span class="w">charge</span> <span class="k">${escapeHtml(e.target)}</span>`;
+    } else if (e.type === 'rout') {
+      li.innerHTML = `${name} <span class="w">break and flee</span>`;
+    } else {
+      li.innerHTML = `${name} <span class="w">cut down to the last</span>`;
+    }
     el.feed.append(li);
     while (el.feed.children.length > 6) el.feed.firstElementChild.remove();
   }
@@ -194,29 +213,46 @@ el.recent.addEventListener('click', (e) => {
 });
 
 function fmt(n) {
-  return n >= 100 ? Math.round(n) : n.toFixed(1);
+  return n >= 10 ? Math.round(n) : n.toFixed(1);
+}
+
+// What a unit type is good against, from the melee bonus table.
+function strongVs(type) {
+  return Object.entries(BONUS[type]).filter(([, m]) => m > 1.25).map(([k]) => UNIT_TYPES[k].label.toLowerCase());
 }
 
 function buildRoster() {
   el.roster.innerHTML = state.teams.map((t) => {
-    const counts = {};
-    for (const k of t.roster) counts[k] = (counts[k] ?? 0) + 1;
-    const designs = Object.entries(t.designs).map(([k, d]) => `
+    const regs = state.regiments.filter((r) => r.team === t.index);
+    const designs = Object.values(t.designs).map((d) => {
+      const mine = regs.filter((r) => r.design === d);
+      if (!mine.length) return '';
+      const men = mine.reduce((n, r) => n + r.count, 0);
+      const r = d.ranged;
+      const notes = [
+        ...strongVs(d.type).map((k) => `strong vs ${k}`),
+        d.charge ? `charge ×${fmt(d.charge)}` : '',
+        d.shield >= 0.4 ? 'shielded' : '',
+        r?.pierce ? 'armour-piercing' : '',
+      ].filter(Boolean);
+      return `
       <div class="design">
-        <b>${escapeHtml(d.name)}</b> ×${counts[k] ?? 0}
-        <div class="stats">Hull ${d.hull} · Shield ${d.shield} · ${Math.round(d.speed)} m/s</div>
-        <ul>${d.weapons.map((w) => `
-          <li><span class="sw" style="--wc:${w.color}"></span><span class="wn">${escapeHtml(w.name)}</span>
-            — ${fmt(w.damage)} dmg${w.salvo > 1 ? ` ×${w.salvo}` : ''} · ${Math.round(w.range)} rng · ${w.cooldown.toFixed(2)}s${w.pd ? ' · anti-missile' : ''}${w.shieldMult > 1.5 ? ' · shield-breaker' : ''}${w.arc < Math.PI ? ' · fixed' : ''}</li>`).join('')}
+        <b>${escapeHtml(d.name)}</b> <span class="kind">${escapeHtml(d.typeLabel)}</span> · ${mine.length} ${mine.length === 1 ? 'company' : 'companies'}, ${men} men
+        <div class="stats">HP ${d.hp} · armour ${Math.round(d.armor * 100)}% · ${Math.round(d.speed)} paces/s</div>
+        <ul>
+          <li><span class="wn">${d.type === 'cavalry' ? (d.lance ? 'Lance' : 'Sword') : d.type === 'spear' ? 'Spear' : d.type === 'sword' ? 'Blade' : 'Knife'}</span> — ${fmt(d.dmg)} dmg · ${fmt(d.reach)} reach · ${d.cooldown.toFixed(1)}s</li>
+          ${r ? `<li><span class="wn">${r.bolt ? 'Crossbow' : 'Bow'}</span> — ${fmt(r.dmg)} dmg · ${Math.round(r.range)} range · volley every ${r.cooldown.toFixed(1)}s</li>` : ''}
+          ${notes.length ? `<li>${notes.join(' · ')}</li>` : ''}
         </ul>
-      </div>`).join('');
+        <div class="regs">${mine.map((x) => escapeHtml(x.name)).join(' · ')}</div>
+      </div>`;
+    }).join('');
     const pct = (v) => `${v >= 1 ? '+' : ''}${Math.round((v - 1) * 100)}%`;
-    const fav = Object.entries(t.weaponPrefs).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k]) => WEAPON_TYPES[k].label).join(', ');
     return `
       <section style="--c:${t.color}">
-        <h2>${escapeHtml(t.name)}</h2>
-        <div class="tech">${escapeHtml(t.doctrine)} doctrine · favours ${escapeHtml(fav)}<br>
-          shields ${pct(t.tech.shields)} · armour ${pct(t.tech.armor)} · engines ${pct(t.tech.engines)}${t.veteran ? ' · veteran crews' : ''}</div>
+        <h2>${shieldSvg(t, 'r')}${escapeHtml(t.name)}</h2>
+        <div class="tech">Led by ${escapeHtml(t.lord)} · ${escapeHtml(t.doctrine)}<br>
+          armour ${pct(t.tech.armor)} · training ${pct(t.tech.training)} · discipline ${pct(t.tech.discipline)}</div>
         ${designs}
       </section>`;
   }).join('');

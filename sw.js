@@ -1,7 +1,10 @@
 // Service worker: caches the app shell so it works fully offline after one visit.
 // app.js registers this as sw.js?v=<VERSION>, so bumping js/version.js installs a
 // fresh worker with a clean cache.
-const CACHE_NAME = `rsb-${new URL(self.location).searchParams.get('v') ?? 'dev'}`;
+// Other apps may share this origin (the space-battles sibling does), so only caches
+// with this app's prefix are ours to clean up.
+const CACHE_PREFIX = 'rmb-';
+const CACHE_NAME = `${CACHE_PREFIX}${new URL(self.location).searchParams.get('v') ?? 'dev'}`;
 const ASSETS = [
   './',
   './index.html',
@@ -11,6 +14,7 @@ const ASSETS = [
   './js/audio.js',
   './js/recent.js',
   './js/gen.js',
+  './js/heraldry.js',
   './js/render.js',
   './js/rng.js',
   './js/sim.js',
@@ -30,7 +34,7 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE_NAME).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

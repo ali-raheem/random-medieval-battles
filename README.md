@@ -1,11 +1,13 @@
-# Random Space Battles
+# Random Medieval Battles
 
-An endless, hands-off space battle generator. Each battle pits two (sometimes three)
-procedurally generated fleets against each other. When one side is left standing,
-a victory banner shows and a brand new battle starts.
+An endless, hands-off medieval battle generator. Each battle pits two (sometimes three)
+procedurally generated armies of spearmen, swordsmen, archers and cavalry against each
+other. When one side is dead or fled, a victory banner shows and a brand new battle
+starts.
 
 No build step, no dependencies, no network calls. Plain HTML/CSS/JS modules plus a
-service worker, so it installs as a PWA and runs fully offline.
+service worker, so it installs as a PWA and runs fully offline. It is a sibling of
+Random Space Battles and shares its architecture.
 
 ## Run it
 
@@ -23,10 +25,10 @@ Use the browser's "Install app" / "Add to Home Screen" for a fullscreen app.
 | Space | Pause / resume |
 | `+` / `-` | Simulation speed (0.5× – 4×) |
 | `N` | Skip to a new battle |
-| `R` | Fleet roster: every design and its generated weapons |
+| `R` | Army roster: every unit type, its companies and stats |
 | `L` | Recent battles: the last 5 you watched, with summary, replay and copy-link |
-| `S` | Settings: install app, sound, health bars, fullscreen, hide interface, version |
-| `B` | Toggle health/shield bars |
+| `S` | Settings: install app, sound, banner bars, fullscreen, hide interface, version |
+| `B` | Toggle the strength/morale bars under each banner |
 | `H` | Hide the whole HUD (tap the screen to bring it back) |
 | `M` | Sound on/off (remembered) |
 | `F` | Fullscreen |
@@ -42,38 +44,50 @@ a link to it.
 
 ## What gets randomised
 
-- **Factions**: name, colour, doctrine (Swarm, Balanced, Line of Battle, Carrier,
-  Raider), shield/armour/engine tech modifiers, and two favoured weapon types.
-- **Ship designs**: one design per hull class per fleet (fighter → battleship), each with a
-  procedurally generated hull outline and randomised hull, shields and speed.
-- **Weapons**: type, damage, range, rate of fire, projectile speed, salvo size and colour.
+- **Armies**: name, commander, heraldry (field, metal and division), doctrine
+  (Shield Wall, Longbow, Chivalry, Pike Square, Combined Arms, Horse Lords, Peasant
+  Levy) and armour, training and discipline modifiers.
+- **Unit designs**: one per unit type per army, a random variant with its own stats.
+- **Companies**: size, frontage and name; deployed with infantry in the centre,
+  archers ahead of or behind the line, and cavalry on the wings.
+- **The field**: season and terrain (meadow, spring, autumn, heath, steppe, snow),
+  a cart track and woods at the edges, and the battle's name.
 
-| Weapon | Behaviour |
-|---|---|
-| Laser | Instant beam, fast cycling, can miss agile targets |
-| Ion Beam | Shreds shields, weak against hull |
-| Particle Lance | Huge long-range beam; spinal mount on small hulls (must face target) |
-| Plasma Cannon | Slow, heavy bolts; strong against hull, weaker against shields |
-| Autocannon | Rapid stream of small slugs |
-| Railgun | Near-instant long-range slug, bypasses shields well |
-| Torpedo | Slow homing warhead with big damage; can be shot down |
-| Missile Swarm | Salvo of agile homing missiles |
-| Point Defence | Short-range guns that shoot down missiles and fighters first |
+| Type | Variants | Role |
+|---|---|---|
+| Spearmen | Spearmen, Pikemen, Halberdiers, Billmen | Long reach; brace against and wreck cavalry |
+| Swordsmen | Swordsmen, Men-at-Arms, Axemen, Huscarls | Shielded, armoured; win the infantry grind against spears |
+| Archers | Archers, Longbowmen, Crossbowmen | Arcing volleys; crossbows hit hard and pierce armour |
+| Cavalry | Horsemen, Knights, Lancers, Light Horse | Flank, charge (huge first-strike bonus), withdraw and charge again; ride down archers |
 
-Shields absorb damage first and regenerate after 3 s without being hit. A battle
-that runs to 4 minutes ends in a ceasefire, and the fleet with the most remaining
-strength wins.
+Formations matter. Spearmen and swordsmen fight as a line while their block holds
+together: they keep their places, strike only to the front, give and take blows
+better than men on their own, and pikes reach past the first rank. Wheeling,
+charging and hits from the side all disorder a block. A man struck from the flank
+breaks ranks to fight it, and a block that loses enough cohesion dissolves into a
+brawl. A spear block that is formed, standing and facing a cavalry charge stops it
+dead and impales the riders. The same block caught moving, disordered or from the
+side gets ridden down. Cavalry knows this, so it rides around to a block's flank or
+rear before charging, and it goes after spearmen already pinned by a fight to their
+front.
+
+Shields stop arrows from the front only, and blows from behind land harder. Every
+company has morale: casualties, flank attacks and friends routing nearby wear it
+down, and once it breaks the company flees for its own edge of the field. A battle
+that runs to 4 minutes ends at nightfall, and the army with the most fighting
+strength left holds the field.
 
 ## Structure
 
 | File | Purpose |
 |---|---|
 | `js/rng.js` | Seeded PRNG (mulberry32) |
-| `js/gen.js` | Faction, design, hull-shape and weapon generation. Balance tables live here |
-| `js/sim.js` | Deterministic, DOM-free simulation: steering AI, targeting, projectiles, damage |
-| `js/audio.js` | Synthesised Web Audio effects: per-weapon sounds, explosions, ambient drone, victory fanfare |
+| `js/gen.js` | Army, unit design, company and deployment generation. Balance tables live here |
+| `js/heraldry.js` | Heraldic divisions as polygons, shared by banners and HUD shields |
+| `js/sim.js` | Deterministic, DOM-free simulation: regiment AI, formations, melee, archery, morale |
+| `js/audio.js` | Synthesised Web Audio effects: volleys, clashing steel, charge horns, wind, fanfare |
 | `js/recent.js` | Recent-battles list: summaries, de-duplication, `localStorage` persistence |
-| `js/render.js` | Canvas renderer: parallax stars, nebula, ships, beams, particles, camera |
+| `js/render.js` | Canvas renderer: terrain, soldiers, arrows, banners, corpses stamped into the ground |
 | `js/app.js` | Fixed-timestep loop, HUD, controls, panels, battle rotation |
 | `js/version.js` | Release version and build time, shown in Settings |
 | `index.html` | Page shell, including the SVG icon sprite (`#i-*` symbols) |
@@ -81,8 +95,9 @@ strength wins.
 | `tests/sim.test.mjs` | Generation validity, determinism, battles always terminate |
 | `tests/assets.test.mjs` | Every shipped file is in the service worker's cache list |
 
-To tune pacing, change `DAMAGE_SCALE` in `js/gen.js` (lower means longer battles) and
-`TIME_LIMIT` in `js/sim.js`. If you add a file, add it to `ASSETS` in `sw.js` too.
+To tune pacing, change `MELEE_SCALE` / `RANGED_SCALE` in `js/gen.js` (lower means
+longer battles), the morale constants in `js/sim.js`, and `TIME_LIMIT`. If you add a
+file, add it to `ASSETS` in `sw.js` too.
 
 ## Releasing
 

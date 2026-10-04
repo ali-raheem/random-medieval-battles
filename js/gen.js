@@ -1,335 +1,298 @@
-// Procedural fleet generation: factions, ship designs, hull shapes and weapons.
+// Procedural army generation: realms, heraldry, unit designs, regiments and deployment.
 // Pure data, no DOM, driven entirely by the seeded RNG.
 
 import { createRng } from './rng.js';
+import { PATTERNS } from './heraldry.js';
 
-export const CLASSES = {
-  fighter:    { label: 'Fighter',    radius: 6,  hull: 32,   shield: [0, 12],    speed: 150, accel: 260, turn: 4.0,  mounts: [1, 2], cost: 10,  evasion: 0.45, size: 0.5 },
-  corvette:   { label: 'Corvette',   radius: 11, hull: 140,  shield: [20, 60],   speed: 105, accel: 120, turn: 2.4,  mounts: [1, 2], cost: 45,  evasion: 0.25, size: 0.8 },
-  frigate:    { label: 'Frigate',    radius: 16, hull: 300,  shield: [60, 140],  speed: 80,  accel: 75,  turn: 1.6,  mounts: [2, 3], cost: 90,  evasion: 0.15, size: 1.0 },
-  destroyer:  { label: 'Destroyer',  radius: 23, hull: 540,  shield: [110, 230], speed: 62,  accel: 52,  turn: 1.15, mounts: [3, 4], cost: 160, evasion: 0.08, size: 1.25 },
-  cruiser:    { label: 'Cruiser',    radius: 32, hull: 980,  shield: [180, 400], speed: 46,  accel: 36,  turn: 0.8,  mounts: [4, 6], cost: 290, evasion: 0.04, size: 1.5 },
-  battleship: { label: 'Battleship', radius: 46, hull: 1800, shield: [300, 640], speed: 32,  accel: 24,  turn: 0.5,  mounts: [6, 8], cost: 520, evasion: 0.02, size: 1.9 },
+// Per-soldier base stats. Variants scale them: `mul` multiplies, `add` adds.
+export const UNIT_TYPES = {
+  spear: {
+    label: 'Spearmen', hp: 150, armor: [0.15, 0.3], shield: 0.3, speed: 28, accel: 70, turn: 5, r: 3.2,
+    reach: 12, dmg: [5, 7], cooldown: [1.1, 1.4], cost: 1, size: [24, 40], cols: [6, 9], spacing: 7.2,
+    variants: [
+      { name: 'Spearmen' },
+      { name: 'Pikemen', shield: 0, mul: { reach: 1.45, dmg: 0.9, speed: 0.92, cost: 1.1 } },
+      { name: 'Halberdiers', shield: 0.1, add: { armor: 0.06 }, mul: { reach: 0.9, dmg: 1.3, cost: 1.2 } },
+      { name: 'Billmen', shield: 0.15, mul: { dmg: 1.1, cost: 0.95 } },
+    ],
+  },
+  sword: {
+    label: 'Swordsmen', hp: 180, armor: [0.25, 0.4], shield: 0.55, speed: 30, accel: 80, turn: 6, r: 3.3,
+    reach: 7, dmg: [7, 10], cooldown: [0.9, 1.2], cost: 1.4, size: [16, 32], cols: [5, 8], spacing: 7.2,
+    variants: [
+      { name: 'Swordsmen' },
+      { name: 'Men-at-Arms', add: { armor: 0.12 }, mul: { hp: 1.1, speed: 0.9, cost: 1.2 } },
+      { name: 'Axemen', shield: 0.35, mul: { dmg: 1.3, cost: 1.05 } },
+      { name: 'Huscarls', mul: { hp: 1.25, dmg: 1.1, cost: 1.3, discipline: 1.2 } },
+    ],
+  },
+  archer: {
+    label: 'Archers', hp: 110, armor: [0.05, 0.18], shield: 0, speed: 32, accel: 80, turn: 6, r: 3,
+    reach: 6, dmg: [2, 4], cooldown: [1.2, 1.6], cost: 1.2, size: [16, 32], cols: [8, 12], spacing: 7.5,
+    ranged: { dmg: [7, 11], range: [270, 340], cooldown: [3.6, 4.8], speed: [240, 280], spread: 0.09 },
+    variants: [
+      { name: 'Archers' },
+      { name: 'Longbowmen', mul: { range: 1.2, rdmg: 1.05, cost: 1.15 } },
+      { name: 'Crossbowmen', bolt: true, pierce: 0.5, shield: 0.35, add: { armor: 0.1 },
+        mul: { rdmg: 1.6, rcooldown: 1.7, range: 0.85, spread: 0.6, rspeed: 1.5 } },
+    ],
+  },
+  cavalry: {
+    label: 'Cavalry', hp: 300, armor: [0.2, 0.35], shield: 0.2, speed: 80, accel: 60, turn: 2.6, r: 5,
+    reach: 9, dmg: [8, 11], cooldown: [1.2, 1.6], cost: 2.8, size: [8, 18], cols: [4, 6], spacing: 12, charge: 12, discipline: 1.5,
+    variants: [
+      { name: 'Horsemen' },
+      { name: 'Knights', lance: true, add: { armor: 0.12 }, mul: { hp: 1.2, speed: 0.9, charge: 1.2, cost: 1.25 } },
+      { name: 'Lancers', lance: true, mul: { charge: 1.35, cost: 1.1 } },
+      { name: 'Light Horse', shield: 0, add: { armor: -0.12 }, mul: { hp: 0.75, speed: 1.2, dmg: 0.85, cost: 0.75 } },
+    ],
+  },
 };
-export const CLASS_ORDER = Object.keys(CLASSES);
+export const TYPE_ORDER = Object.keys(UNIT_TYPES);
 
-export const WEAPON_TYPES = {
-  laser:      { label: 'Laser',          kind: 'beam',    dmg: [8, 15],   range: [260, 360], cooldown: [0.9, 1.5],   accuracy: 0.9,  beamTime: 0.14, width: 1.4, shieldMult: 1,    hullMult: 1,    colors: ['#ff4a4a', '#4aff7a', '#4ac8ff', '#ff5cf0', '#ffd24a'] },
-  ion:        { label: 'Ion Beam',       kind: 'beam',    dmg: [14, 24],  range: [220, 320], cooldown: [1.8, 2.8],   accuracy: 0.85, beamTime: 0.4,  width: 2.6, shieldMult: 2.4,  hullMult: 0.35, colors: ['#7fb8ff', '#9ffcff', '#c89bff'] },
-  lance:      { label: 'Particle Lance', kind: 'beam',    dmg: [45, 75],  range: [400, 540], cooldown: [4.5, 7],     accuracy: 0.8,  beamTime: 0.55, width: 4.5, shieldMult: 1,    hullMult: 1.25, colors: ['#ffffff', '#ffe9a8', '#b8f3ff'], minSize: 0.8, spinal: true },
-  plasma:     { label: 'Plasma Cannon',  kind: 'bolt',    dmg: [18, 32],  range: [240, 340], cooldown: [1.5, 2.5],   speed: [240, 320],   spread: 0.035, shieldMult: 0.75, hullMult: 1.35, colors: ['#7dff5c', '#ff8a2a', '#39f0ff', '#ff3dbb'], radius: 3.2 },
-  autocannon: { label: 'Autocannon',     kind: 'bolt',    dmg: [2, 3.5],  range: [200, 280], cooldown: [0.09, 0.16], speed: [520, 640],   spread: 0.07,  shieldMult: 0.8,  hullMult: 1.1,  colors: ['#ffe08a', '#ffc36b'], radius: 1 },
-  railgun:    { label: 'Railgun',        kind: 'bolt',    dmg: [35, 60],  range: [440, 620], cooldown: [3.5, 5.5],   speed: [1400, 1800], spread: 0.006, shieldMult: 0.55, hullMult: 1.6,  colors: ['#bfe6ff', '#e0d0ff'], radius: 1.6, minSize: 0.8, spinal: true },
-  torpedo:    { label: 'Torpedo',        kind: 'missile', dmg: [60, 110], range: [460, 660], cooldown: [5.5, 8.5],   speed: [110, 150],   turn: 1.6, hp: 12, salvo: [1, 2], salvoGap: 0.35, shieldMult: 1, hullMult: 1.4, colors: ['#ff6b3d', '#ff3dd2', '#3dffe2'], radius: 3 },
-  swarm:      { label: 'Missile Swarm',  kind: 'missile', dmg: [6, 10],   range: [340, 480], cooldown: [4, 6.5],     speed: [190, 240],   turn: 3.6, hp: 3,  salvo: [4, 8], salvoGap: 0.08, shieldMult: 1, hullMult: 1.1, colors: ['#ffb14a', '#ffffff'], radius: 1.6 },
-  pd:         { label: 'Point Defence',  kind: 'bolt',    dmg: [3, 5],    range: [120, 160], cooldown: [0.1, 0.18],  speed: [760, 860],   spread: 0.05,  shieldMult: 1,    hullMult: 0.8,  colors: ['#9dffb0', '#fff59d'], radius: 0.9, pd: true, minSize: 0.8 },
+// Melee damage multiplier, attacker type → defender type.
+export const BONUS = {
+  spear:   { spear: 1,   sword: 1,   archer: 1.1, cavalry: 2.4 },
+  sword:   { spear: 1.5, sword: 1,   archer: 1.3, cavalry: 0.9 },
+  archer:  { spear: 1,   sword: 0.8, archer: 1,   cavalry: 0.8 },
+  cavalry: { spear: 0.6, sword: 1,   archer: 1.8, cavalry: 1 },
 };
-export const WEAPON_ORDER = Object.keys(WEAPON_TYPES);
+// Arrows find a horse an easy target.
+export const ARROW_BONUS = { spear: 1, sword: 1, archer: 1, cavalry: 1.1 };
 
 const DOCTRINES = {
-  Swarm:            { fighter: 6,   corvette: 4,   frigate: 2,   destroyer: 0.5, cruiser: 0.2, battleship: 0.05 },
-  Balanced:         { fighter: 2,   corvette: 2,   frigate: 2,   destroyer: 1.5, cruiser: 1,   battleship: 0.4 },
-  'Line of Battle': { fighter: 0.4, corvette: 0.6, frigate: 1,   destroyer: 2,   cruiser: 2,   battleship: 1.2 },
-  Carrier:          { fighter: 8,   corvette: 0.3, frigate: 1,   destroyer: 0.5, cruiser: 1.5, battleship: 0.3 },
-  Raider:           { fighter: 1,   corvette: 5,   frigate: 3,   destroyer: 1,   cruiser: 0.2, battleship: 0 },
+  'Shield Wall':   { w: { spear: 3,   sword: 4,   archer: 1,   cavalry: 0.3 } },
+  'Longbow':       { w: { spear: 1.5, sword: 1,   archer: 4.5, cavalry: 0.6 } },
+  'Chivalry':      { w: { spear: 1,   sword: 1.5, archer: 0.8, cavalry: 4 } },
+  'Pike Square':   { w: { spear: 5,   sword: 1,   archer: 1.5, cavalry: 0.5 } },
+  'Combined Arms': { w: { spear: 2,   sword: 2,   archer: 2,   cavalry: 1.5 } },
+  'Horse Lords':   { w: { spear: 0.4, sword: 0.8, archer: 3,   cavalry: 4.5 } },
+  // Cheap, numerous and brittle.
+  'Peasant Levy':  { w: { spear: 4,   sword: 1,   archer: 3,   cavalry: 0.3 }, budget: 1.2, armor: 0.7, discipline: 0.75 },
 };
 
-const SYLLABLE_A = ['Veyr', 'Kal', 'Oro', 'Thes', 'Mar', 'Zhan', 'Ist', 'Quor', 'Bel', 'Nym', 'Sar', 'Tor', 'Ald', 'Cyr', 'Hel', 'Vos', 'Dra', 'Esk', 'Ur', 'Pax', 'Gal', 'Rho', 'Syl', 'Tek'];
-const SYLLABLE_B = ['an', 'ic', 'ari', 'os', 'eth', 'uun', 'ia', 'ex', 'or', 'ine', 'ath', 'is', 'ond', 'ul', 'ae', 'yr'];
-const FLEET_NOUN = ['Armada', 'Fleet', 'Flotilla', 'Task Force', 'Vanguard', 'Legion', 'Crusade', 'Expedition', 'Home Guard', 'Raiders', 'Compact', 'Syndicate', 'Hegemony', 'Covenant'];
-const FLEET_ADJ = ['Crimson', 'Iron', 'Silent', 'Radiant', 'Hollow', 'Ashen', 'Gilded', 'Azure', 'Obsidian', 'Verdant', 'Scarlet', 'Pale', 'Burning', 'Frozen', 'Last', 'Unbroken', 'Starborn'];
-const CLASS_NAMES = ['Talon', 'Spear', 'Warden', 'Halberd', 'Tempest', 'Aegis', 'Nomad', 'Wraith', 'Sabre', 'Bastion', 'Corsair', 'Lancer', 'Monarch', 'Paladin', 'Scythe', 'Viper', 'Anvil', 'Seraph', 'Kraken', 'Titan', 'Mantis', 'Hornet', 'Dagger', 'Zenith', 'Harrier', 'Leviathan', 'Oracle', 'Revenant'];
-const SHIP_NAMES = ['Resolute', 'Vigilant', 'Ember', 'Harbinger', 'Endurance', 'Nightfall', 'Valour', 'Perihelion', 'Solace', 'Tenacity', 'Ardent', 'Meridian', 'Obstinate', 'Clarion', 'Defiance', 'Eventide', 'Fortitude', 'Gallant', 'Indomitable', 'Jubilant', 'Lodestar', 'Nemesis', 'Onslaught', 'Providence', 'Quietus', 'Reckoning', 'Sovereign', 'Thunderchild', 'Umbra', 'Vendetta', 'Wayfarer', 'Xiphos', 'Zealous', 'Aurora', 'Brimstone', 'Cinder', 'Dauntless', 'Equinox', 'Fury', 'Gossamer', 'Horizon', 'Invictus', 'Juggernaut', 'Kestrel', 'Lament', 'Mistral', 'Nova', 'Orison', 'Pyre', 'Radiance', 'Sirocco', 'Tribune', 'Unyielding', 'Vesper', 'Warspite'];
-const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '7th', '9th', '12th', '13th', '21st', '44th'];
+const REALM_A = ['Aven', 'Brec', 'Caer', 'Dun', 'Eld', 'Fen', 'Gwyn', 'Hal', 'Isen', 'Kor', 'Lor', 'Mor', 'Nor', 'Ost', 'Rav', 'Sten', 'Thal', 'Val', 'Wes', 'Ash', 'Black', 'Wolf', 'Rook', 'Oak', 'Grey', 'Stag', 'Bram', 'Cul', 'Hart', 'Wyn'];
+const REALM_B = ['mark', 'dale', 'mere', 'ford', 'holt', 'wick', 'gard', 'moor', 'haven', 'burg', 'shire', 'fell', 'reach', 'vale', 'stead', 'wood', 'ton', 'by'];
+const GIVEN = ['Aldric', 'Bertram', 'Cedric', 'Edmund', 'Godfrey', 'Hugh', 'Leofric', 'Osric', 'Roland', 'Tancred', 'Ulric', 'Walter', 'Baldwin', 'Geoffrey', 'Eustace', 'Rowan', 'Matilda', 'Isolde', 'Eleanor', 'Adela', 'Gwendolyn', 'Beatrice', 'Sibyl', 'Brand', 'Harald', 'Ivo', 'Odo', 'Rainald', 'Theobald', 'Wystan'];
+const TITLE = ['King', 'Queen', 'Duke', 'Duchess', 'Earl', 'Count', 'Countess', 'Lord', 'Lady', 'Baron', 'Prince', 'Princess', 'Margrave', 'Warlord'];
+const ADJ = ['Black', 'White', 'Red', 'Golden', 'Silver', 'Iron', 'Crimson', 'Grey', 'Green', 'Broken', 'Burning', 'Hollow', 'Last', 'Free'];
+const EMBLEM = ['Rose', 'Lion', 'Stag', 'Boar', 'Raven', 'Tower', 'Crown', 'Wolf', 'Dragon', 'Hart', 'Eagle', 'Oak', 'Sword', 'Bear', 'Falcon'];
+const FIELD = ['Field', 'Ford', 'Hill', 'Moor', 'Bridge', 'Heath', 'Ridge', 'Meadow', 'Crossing', 'Downs'];
+const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '7th', '9th', '12th'];
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+export const TERRAINS = ['meadow', 'spring', 'autumn', 'heath', 'steppe', 'snow'];
+// Heraldic metals: or and argent.
+const METALS = ['#e9c85a', '#ece8dc'];
 
 const lerpRange = ([a, b], t) => a + (b - a) * t;
-const DAMAGE_SCALE = 0.65; // global pacing knob: lower = longer battles
-const MAX_SHIPS = 64;
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+// Global pacing knobs: lower = longer battles.
+const MELEE_SCALE = 0.6;
+const RANGED_SCALE = 3.75;
+const MAX_REGIMENTS = 10;
+const MAX_MEN = 360;
 
-function makeSpecies(rng) {
-  return rng.pick(SYLLABLE_A) + rng.pick(SYLLABLE_B);
-}
+const makeRealm = (rng) => rng.pick(REALM_A) + rng.pick(REALM_B);
 
-function makeFleetName(rng, species) {
-  const noun = rng.pick(FLEET_NOUN);
-  switch (rng.int(0, 2)) {
-    case 0: return `${rng.pick(ORDINALS)} ${species} ${noun}`;
-    case 1: return `The ${rng.pick(FLEET_ADJ)} ${noun}`;
-    default: return `${species} ${rng.pick(FLEET_ADJ)} ${noun}`;
+function makeArmyName(rng, realm) {
+  switch (rng.int(0, 4)) {
+    case 0: return `Host of ${realm}`;
+    case 1: return `${realm} Levy`;
+    case 2: return `The ${rng.pick(ADJ)} Company`;
+    case 3: return `House ${realm}`;
+    default: return `Knights of the ${rng.pick(ADJ)} ${rng.pick(EMBLEM)}`;
   }
 }
 
-function sizeWord(size) {
-  if (size <= 0.5) return 'Light ';
-  if (size >= 1.9) return 'Siege ';
-  if (size >= 1.25) return 'Heavy ';
-  return '';
-}
-
-// Hull outline as a closed polygon in unit space, nose pointing +x, spanning x in [-1, 1].
-function makeShape(rng, clsKey) {
-  const segs = rng.int(3, 5);
-  const top = [];
-  for (let i = 0; i < segs; i++) {
-    const x = 0.75 - (1.75 * i) / (segs - 1);
-    const y = rng.range(0.18, 0.6) * (i === 0 ? 0.6 : 1);
-    top.push([x, y]);
-  }
-  const wingChance = clsKey === 'fighter' ? 0.85 : 0.45;
-  if (rng.chance(wingChance)) {
-    const i = rng.int(1, segs - 1);
-    top[i][1] = rng.range(0.75, 0.98);
-    if (clsKey === 'fighter') top[i][0] -= rng.range(0, 0.3);
-  }
-  const noseY = rng.chance(0.3) ? rng.range(0.05, 0.15) : 0;
-  const notch = rng.chance(0.4);
-  const tailY = top[segs - 1][1];
-  const bottom = top.map(([x, y]) => [x, -y]).reverse();
-  const points = [[1, noseY], ...top, ...(notch ? [[-0.72, 0]] : []), ...bottom];
-  if (noseY) points.push([1, -noseY]);
-
-  const engineCount = clsKey === 'fighter' ? 1 : rng.int(1, 3);
-  const engines = [];
-  for (let i = 0; i < engineCount; i++) {
-    const y = engineCount === 1 ? (notch ? tailY * 0.6 : 0) : (i / (engineCount - 1) - 0.5) * tailY * 1.3;
-    engines.push([-1, y]);
-    if (engineCount === 1 && notch) engines.push([-1, -y]);
-  }
-  // Inner "superstructure" detail line.
-  const deck = rng.range(0.35, 0.6);
-  return { points, engines, deck };
-}
-
-function makeWeapon(rng, fleet, typeKey, cls, mountIndex, mountCount) {
-  const t = WEAPON_TYPES[typeKey];
-  const size = cls.size;
-  const isFighter = cls === CLASSES.fighter;
-  const w = {
+function makeDesign(rng, army, typeKey) {
+  const t = UNIT_TYPES[typeKey];
+  const v = rng.pick(t.variants);
+  const m = (k) => v.mul?.[k] ?? 1;
+  const a = (k) => v.add?.[k] ?? 0;
+  const tech = army.tech;
+  const d = {
     type: typeKey,
-    kind: t.kind,
-    name: `${sizeWord(size)}${t.label} Mk ${rng.pick(ROMAN)}`,
-    damage: lerpRange(t.dmg, rng.next()) * size ** 1.15 * DAMAGE_SCALE,
-    range: lerpRange(t.range, rng.next()) * (t.pd ? 1 : 0.55 + 0.35 * size),
-    cooldown: lerpRange(t.cooldown, rng.next()) * (0.85 + 0.15 * size),
-    shieldMult: t.shieldMult,
-    hullMult: t.hullMult,
-    color: fleet.weaponColors[typeKey],
-    pd: !!t.pd,
+    typeLabel: t.label,
+    name: v.name,
+    hp: Math.round(t.hp * m('hp') * rng.range(0.9, 1.1)),
+    armor: clamp((lerpRange(t.armor, rng.next()) + a('armor')) * tech.armor, 0, 0.7),
+    shield: v.shield ?? t.shield,
+    speed: t.speed * m('speed') * rng.range(0.92, 1.08),
+    accel: t.accel,
+    turn: t.turn,
+    r: t.r,
+    reach: t.reach * m('reach'),
+    dmg: lerpRange(t.dmg, rng.next()) * m('dmg') * tech.training * MELEE_SCALE,
+    cooldown: lerpRange(t.cooldown, rng.next()),
+    spacing: t.spacing,
+    cost: t.cost * m('cost'),
+    charge: t.charge ? t.charge * m('charge') : 0,
+    lance: !!v.lance,
+    discipline: tech.discipline * m('discipline') * (t.discipline ?? 1),
+    mass: typeKey === 'cavalry' ? 4 : 1,
+    ranged: null,
   };
-  if (t.kind === 'beam') {
-    w.accuracy = t.accuracy;
-    w.beamTime = t.beamTime;
-    w.width = t.width * Math.sqrt(size);
-  } else {
-    w.speed = lerpRange(t.speed, rng.next());
-    w.radius = t.radius * Math.sqrt(size);
+  if (t.ranged) {
+    const r = t.ranged;
+    d.ranged = {
+      dmg: lerpRange(r.dmg, rng.next()) * m('rdmg') * tech.training * RANGED_SCALE,
+      range: lerpRange(r.range, rng.next()) * m('range'),
+      cooldown: lerpRange(r.cooldown, rng.next()) * m('rcooldown'),
+      speed: lerpRange(r.speed, rng.next()) * m('rspeed'),
+      spread: r.spread * m('spread'),
+      arc: v.bolt ? 0.06 : 0.3, // apex height as a fraction of the distance
+      pierce: v.pierce ?? 0,
+      bolt: !!v.bolt,
+    };
   }
-  if (t.kind === 'bolt') w.spread = t.spread;
-  if (t.kind === 'missile') {
-    w.turn = t.turn * rng.range(0.85, 1.2);
-    w.hp = t.hp * size;
-    w.salvo = Math.max(1, Math.round(rng.int(t.salvo[0], t.salvo[1]) * Math.min(1, size + 0.2)));
-    w.salvoGap = t.salvoGap;
-  }
-
-  // Firing arc and mount position (unit hull space).
-  if (isFighter) {
-    w.arc = 0.3;
-    w.mount = [0.4, mountCount === 1 ? 0 : (mountIndex === 0 ? 0.35 : -0.35)];
-  } else if (t.spinal && size <= 1) {
-    w.arc = 0.3;
-    w.mount = [0.85, 0];
-  } else {
-    w.arc = Math.PI;
-    w.mount = [rng.range(-0.55, 0.6), rng.range(-0.32, 0.32)];
-  }
-  return w;
+  return d;
 }
 
-function makeDesign(rng, fleet, clsKey) {
-  const cls = CLASSES[clsKey];
-  const tech = fleet.tech;
-  const isFighter = clsKey === 'fighter';
-  const allowed = WEAPON_ORDER.filter((k) => {
-    const t = WEAPON_TYPES[k];
-    if (isFighter) return !t.pd && !t.minSize;
-    return !t.minSize || cls.size >= t.minSize;
-  });
-  const mountCount = rng.int(cls.mounts[0], cls.mounts[1]);
-  const weapons = [];
-  let pdCount = 0;
-  for (let i = 0; i < mountCount; i++) {
-    let choices = allowed.filter((k) => k !== 'pd' || pdCount < 2);
-    // Guarantee at least one offensive weapon.
-    if (i === mountCount - 1 && weapons.every((w) => w.pd)) choices = choices.filter((k) => k !== 'pd');
-    const typeKey = rng.weighted(choices.map((k) => [k, fleet.weaponPrefs[k]]));
-    if (typeKey === 'pd') pdCount++;
-    weapons.push(makeWeapon(rng, fleet, typeKey, cls, i, mountCount));
-  }
-
-  const offensive = weapons.filter((w) => !w.pd).map((w) => w.range).sort((a, b) => a - b);
-  const median = offensive[Math.floor(offensive.length / 2)];
-  const spinal = weapons.filter((w) => w.arc < Math.PI && !isFighter);
-
-  return {
-    cls: clsKey,
-    classLabel: cls.label,
-    name: `${rng.pick(CLASS_NAMES)}-class ${cls.label}`,
-    radius: cls.radius * rng.range(0.9, 1.1),
-    hull: Math.round(cls.hull * tech.armor * rng.range(0.85, 1.15)),
-    shield: Math.round(lerpRange(cls.shield, rng.next()) * tech.shields),
-    speed: cls.speed * tech.engines * rng.range(0.88, 1.12) / Math.sqrt(tech.armor),
-    accel: cls.accel * tech.engines,
-    turn: cls.turn * rng.range(0.9, 1.1),
-    evasion: cls.evasion,
-    fighter: isFighter,
-    engageRange: median * 0.8,
-    spinalRange: spinal.length ? Math.min(...spinal.map((w) => w.range)) : 0,
-    weapons,
-    shape: makeShape(rng, clsKey),
-    cost: cls.cost,
-  };
-}
-
-function hslColors(hue) {
-  return {
-    color: `hsl(${hue} 85% 62%)`,
-    light: `hsl(${hue} 90% 80%)`,
-    mid: `hsl(${hue} 40% 34%)`,
-    dark: `hsl(${hue} 35% 15%)`,
-  };
-}
-
-function makeFleet(rng, index, hue, budget) {
-  const species = makeSpecies(rng);
-  const doctrine = rng.pick(Object.keys(DOCTRINES));
-  const weaponPrefs = {};
-  for (const k of WEAPON_ORDER) weaponPrefs[k] = rng.next() ** 2 + 0.02;
-  // Every faction has a couple of signature weapons it strongly favours.
-  for (let i = 0; i < 2; i++) weaponPrefs[rng.pick(WEAPON_ORDER.filter((k) => k !== 'pd'))] += 1.5;
-  const weaponColors = {};
-  for (const k of WEAPON_ORDER) weaponColors[k] = rng.pick(WEAPON_TYPES[k].colors);
-
-  const fleet = {
+function makeArmy(rng, index, hue, budget) {
+  const realm = makeRealm(rng);
+  const doctrineKey = rng.pick(Object.keys(DOCTRINES));
+  const doctrine = DOCTRINES[doctrineKey];
+  const army = {
     index,
-    species,
-    name: makeFleetName(rng, species),
-    prefix: `${species[0]}${rng.pick(['N', 'S', 'D', 'R', 'K'])}S`,
-    doctrine,
+    realm,
+    name: makeArmyName(rng, realm),
+    lord: `${rng.pick(TITLE)} ${rng.pick(GIVEN)} of ${realm}`,
+    doctrine: doctrineKey,
     hue,
-    ...hslColors(hue),
+    color: `hsl(${hue} 62% 50%)`,
+    light: `hsl(${hue} 75% 72%)`,
+    mid: `hsl(${hue} 45% 36%)`,
+    dark: `hsl(${hue} 50% 22%)`,
+    heraldry: { field: `hsl(${hue} 62% 42%)`, metal: rng.pick(METALS), pattern: rng.pick(PATTERNS) },
     tech: {
-      shields: rng.range(0.6, 1.45),
-      armor: rng.range(0.8, 1.3),
-      engines: rng.range(0.85, 1.2),
+      armor: rng.range(0.85, 1.2) * (doctrine.armor ?? 1),
+      training: rng.range(0.85, 1.2),
+      discipline: rng.range(0.8, 1.25) * (doctrine.discipline ?? 1),
     },
-    weaponPrefs,
-    weaponColors,
     designs: {},
-    roster: [],
+    regiments: [],
   };
 
-  const weights = DOCTRINES[doctrine];
-  let remaining = budget;
+  let remaining = budget * (doctrine.budget ?? 1);
+  let men = 0;
   let guard = 0;
-  while (guard++ < 200 && fleet.roster.length < MAX_SHIPS) {
-    const options = CLASS_ORDER
-      .filter((k) => weights[k] > 0 && CLASSES[k].cost * (k === 'fighter' ? 3 : 1) <= remaining)
-      .map((k) => [k, weights[k]]);
+  while (guard++ < 100 && army.regiments.length < MAX_REGIMENTS && men < MAX_MEN) {
+    const options = TYPE_ORDER
+      .filter((k) => doctrine.w[k] > 0 && UNIT_TYPES[k].size[0] * UNIT_TYPES[k].cost <= remaining)
+      .map((k) => [k, doctrine.w[k]]);
     if (!options.length) break;
-    const clsKey = rng.weighted(options);
-    if (!fleet.designs[clsKey]) fleet.designs[clsKey] = makeDesign(rng, fleet, clsKey);
-    const count = clsKey === 'fighter' ? rng.int(3, 6) : 1;
-    for (let i = 0; i < count && CLASSES[clsKey].cost <= remaining; i++) {
-      fleet.roster.push(clsKey);
-      remaining -= CLASSES[clsKey].cost;
-    }
+    const typeKey = rng.weighted(options);
+    if (!army.designs[typeKey]) army.designs[typeKey] = makeDesign(rng, army, typeKey);
+    const d = army.designs[typeKey];
+    const t = UNIT_TYPES[typeKey];
+    const count = Math.min(rng.int(t.size[0], t.size[1]), Math.floor(remaining / d.cost), MAX_MEN - men);
+    if (count < t.size[0] / 2) break;
+    army.regiments.push({ type: typeKey, count, cols: Math.min(count, rng.int(t.cols[0], t.cols[1])) });
+    remaining -= count * d.cost;
+    men += count;
   }
-  if (!fleet.roster.length) {
-    fleet.designs.corvette = makeDesign(rng, fleet, 'corvette');
-    fleet.roster.push('corvette');
+  if (!army.regiments.length) {
+    army.designs.spear ??= makeDesign(rng, army, 'spear');
+    army.regiments.push({ type: 'spear', count: 24, cols: 8 });
   }
-  // A fleet that hit the ship cap (typically fighter swarms) spends what's left on
-  // tougher hulls instead, so budgets stay comparable between factions.
-  const spent = budget - remaining;
-  const boost = Math.min(1.8, budget / Math.max(spent, 1));
-  if (boost > 1.1) {
-    for (const d of Object.values(fleet.designs)) {
-      d.hull = Math.round(d.hull * boost);
-      d.shield = Math.round(d.shield * boost);
-    }
-    fleet.veteran = true;
-  }
-  return fleet;
+  return army;
 }
 
-function shipName(rng, fleet, used, clsKey) {
-  if (clsKey === 'fighter') {
-    const call = rng.pick(['Red', 'Gold', 'Blue', 'Rogue', 'Ghost', 'Wolf', 'Hawk', 'Echo', 'Viper', 'Jackal']);
-    return `${call} ${rng.int(1, 12)}`;
+function regimentName(rng, army, d, used) {
+  let base;
+  if (d.type === 'cavalry') {
+    base = rng.chance(0.5) ? `Sir ${rng.pick(GIVEN)}'s ${d.name}` : `${rng.pick(EMBLEM)} ${d.name}`;
+  } else {
+    switch (rng.int(0, 2)) {
+      case 0: base = `${makeRealm(rng)} ${d.name}`; break;
+      case 1: base = `${rng.pick(ORDINALS)} ${army.realm} ${d.name}`; break;
+      default: base = `${rng.pick(GIVEN)}'s ${d.name}`;
+    }
   }
-  let base = rng.pick(SHIP_NAMES);
-  let name = `${fleet.prefix} ${base}`;
+  let name = base;
   let n = 2;
-  while (used.has(name)) name = `${fleet.prefix} ${base} ${ROMAN[n++ - 1] ?? n}`;
+  while (used.has(name)) name = `${base} ${ROMAN[n++ - 1] ?? n}`;
   used.add(name);
   return name;
 }
 
+const width = (r, d) => r.cols * d.spacing;
+const depth = (r, d) => Math.ceil(r.count / r.cols) * d.spacing;
+
 export function generateBattle(seed) {
   const rng = createRng(seed);
-  const teamCount = rng.chance(0.2) ? 3 : 2;
-  const budget = rng.int(600, 2600);
+  const teamCount = rng.chance(0.15) ? 3 : 2;
+  const budget = rng.int(140, 380) * (teamCount === 3 ? 0.8 : 1);
   const baseHue = rng.range(0, 360);
   const teams = [];
   for (let i = 0; i < teamCount; i++) {
     const hue = Math.round((baseHue + (360 / teamCount) * i + rng.range(-20, 20) + 360) % 360);
-    teams.push(makeFleet(rng, i, hue, budget * rng.range(0.9, 1.1)));
+    teams.push(makeArmy(rng, i, hue, budget * rng.range(0.9, 1.1)));
   }
+  const place = `${makeRealm(rng)} ${rng.pick(FIELD)}`;
+  const terrain = rng.pick(TERRAINS);
 
-  const totalShips = teams.reduce((n, t) => n + t.roster.length, 0);
-  const arenaRadius = 650 + Math.sqrt(totalShips) * 90;
-  const ships = [];
+  // Lines face each other: two armies across a horizontal field, three from a triangle.
+  const dist = teamCount === 2 ? rng.range(310, 360) : rng.range(400, 450);
+  const angle0 = teamCount === 2 ? rng.pick([0, Math.PI]) + rng.range(-0.25, 0.25) : rng.range(0, Math.PI * 2);
+  const regiments = [];
   const used = new Set();
-  const spawnAngle0 = rng.range(0, Math.PI * 2);
+  let maxHalfWidth = 0;
 
-  for (const team of teams) {
-    const a = spawnAngle0 + (team.index / teamCount) * Math.PI * 2 + rng.range(-0.2, 0.2);
-    const cx = Math.cos(a) * arenaRadius * 0.85;
-    const cy = Math.sin(a) * arenaRadius * 0.85;
-    const face = a + Math.PI; // toward centre
+  for (const army of teams) {
+    const a = angle0 + (army.index / teamCount) * Math.PI * 2;
+    army.home = [Math.cos(a), Math.sin(a)];
+    const cx = Math.cos(a) * dist, cy = Math.sin(a) * dist;
+    const face = a + Math.PI; // toward the centre
     const fx = Math.cos(face), fy = Math.sin(face);
     const sx = -fy, sy = fx;
-    const spread = 120 + team.roster.length * 9;
-    let squadron = null;
-    let squadLeft = 0;
-    for (const clsKey of team.roster) {
-      const design = team.designs[clsKey];
-      const rank = CLASS_ORDER.indexOf(clsKey);
-      let along, lateral;
-      if (clsKey === 'fighter') {
-        if (squadLeft <= 0) {
-          squadron = { along: rng.range(40, 110), lateral: rng.range(-spread, spread) };
-          squadLeft = rng.int(3, 6);
-        }
-        squadLeft--;
-        along = squadron.along + rng.range(-18, 18);
-        lateral = squadron.lateral + rng.range(-24, 24);
-      } else {
-        along = -rank * 45 + rng.range(-25, 25);
-        lateral = rng.range(-spread, spread);
-      }
-      ships.push({
-        team: team.index,
-        design,
-        name: shipName(rng, team, used, clsKey),
+    const withDesign = army.regiments.map((r) => ({ ...r, d: army.designs[r.type] }));
+    const infantry = withDesign.filter((r) => r.type === 'spear' || r.type === 'sword');
+    const archers = withDesign.filter((r) => r.type === 'archer');
+    const cavalry = withDesign.filter((r) => r.type === 'cavalry');
+    const deploy = (r, along, lateral) => {
+      regiments.push({
+        team: army.index,
+        design: r.d,
+        name: regimentName(rng, army, r.d, used),
+        count: r.count,
+        cols: r.cols,
         x: cx + fx * along + sx * lateral,
         y: cy + fy * along + sy * lateral,
-        angle: face + rng.range(-0.1, 0.1),
+        facing: face + rng.range(-0.05, 0.05),
       });
+    };
+    const layRow = (list, along) => {
+      const total = list.reduce((w, r) => w + width(r, r.d), 0) + Math.max(0, list.length - 1) * 16;
+      let lat = -total / 2;
+      for (const r of list) {
+        const w = width(r, r.d);
+        deploy(r, along, lat + w / 2);
+        lat += w + 16;
+      }
+      return total;
+    };
+    const front = infantry.length ? infantry : archers;
+    const frontDepth = Math.max(0, ...front.map((r) => depth(r, r.d)));
+    let lineWidth = layRow(front, 0);
+    if (front !== archers && archers.length) {
+      // Archers either skirmish ahead of the line or shoot over it from behind.
+      const archerDepth = Math.max(...archers.map((r) => depth(r, r.d)));
+      const gap = frontDepth / 2 + archerDepth / 2 + 18;
+      lineWidth = Math.max(lineWidth, layRow(archers, rng.chance(0.4) ? gap : -gap));
     }
+    // Cavalry on the wings.
+    const wing = [lineWidth / 2 + 30, lineWidth / 2 + 30];
+    cavalry.forEach((r, i) => {
+      const side = i % 2 ? -1 : 1;
+      const w = width(r, r.d);
+      const k = i % 2;
+      deploy(r, -10, side * (wing[k] + w / 2));
+      wing[k] += w + 20;
+    });
+    maxHalfWidth = Math.max(maxHalfWidth, wing[0], wing[1]);
   }
 
-  return { seed, teams, ships, arenaRadius, budget };
+  const arenaRadius = Math.max(dist + 260, maxHalfWidth + 200);
+  return { seed, teams, regiments, arenaRadius, place, terrain, budget };
 }

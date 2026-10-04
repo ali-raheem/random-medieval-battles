@@ -27,9 +27,9 @@ test('round-trips through storage and ignores junk', () => {
   const store = memStorage();
   saveRecent([entry(10), entry(0xffffffff)], store);
   assert.deepEqual(loadRecent(store).map((e) => e.seed), [10, 0xffffffff]);
-  store.setItem('rsb.recent', '[{"seed":"x"},null,' + JSON.stringify(entry(5)) + ']');
+  store.setItem('rmb.recent', '[{"seed":"x"},null,' + JSON.stringify(entry(5)) + ']');
   assert.deepEqual(loadRecent(store).map((e) => e.seed), [5]);
-  store.setItem('rsb.recent', '{not json');
+  store.setItem('rmb.recent', '{not json');
   assert.deepEqual(loadRecent(store), []);
   assert.deepEqual(loadRecent({ getItem() { throw new Error('denied'); } }), []);
 });
@@ -49,9 +49,11 @@ test('summaries match the battle outcome', () => {
   if (s.winner) {
     assert.equal(done.title, s.winner.name);
     assert.equal(done.color, s.winner.color);
-    assert.ok(['VICTORY', 'CEASEFIRE'].includes(done.kicker));
+    assert.ok(['VICTORY', 'NIGHTFALL'].includes(done.kicker));
   } else {
-    assert.equal(done.kicker, 'MUTUAL DESTRUCTION');
+    assert.equal(done.kicker, 'NO VICTOR');
   }
-  assert.match(done.sub, new RegExp(`${s.log.length} destroyed`));
+  const fallen = s.soldiers.filter((x) => !x.alive && !x.fled).length;
+  assert.match(done.sub, new RegExp(`${fallen} fallen`));
+  assert.match(done.sub, new RegExp(`Battle of ${s.place}`));
 });

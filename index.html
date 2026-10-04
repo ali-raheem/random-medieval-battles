@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Random Space Battles</title>
-  <meta name="description" content="Endless procedurally generated fleet battles. Works offline.">
-  <meta name="theme-color" content="#03040a">
+  <title>Random Medieval Battles</title>
+  <meta name="description" content="Endless procedurally generated medieval battles. Works offline.">
+  <meta name="theme-color" content="#16110b">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -29,7 +29,7 @@
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
   </svg>
 
-  <canvas id="view" aria-label="Space battle"></canvas>
+  <canvas id="view" aria-label="Medieval battle"></canvas>
 
   <div id="hud">
     <header id="teams" aria-live="off"></header>
@@ -42,19 +42,19 @@
       <div class="sub"></div>
     </div>
 
-    <aside id="roster" class="panel" hidden aria-label="Fleet roster"></aside>
+    <aside id="roster" class="panel" hidden aria-label="Army roster"></aside>
     <aside id="recent" class="panel" hidden aria-label="Recent battles"></aside>
     <aside id="settings" class="panel" hidden aria-label="Settings">
       <h2>Settings</h2>
       <button class="row" id="set-install" hidden><svg class="icon"><use href="#i-install"/></svg><span>Install app<small></small></span></button>
       <button class="row" id="set-sound" role="switch"><svg class="icon"><use href="#i-sound"/></svg><span>Sound</span><i class="switch"></i></button>
-      <button class="row" id="set-bars" role="switch"><svg class="icon"><use href="#i-bars"/></svg><span>Health bars</span><i class="switch"></i></button>
+      <button class="row" id="set-bars" role="switch"><svg class="icon"><use href="#i-bars"/></svg><span>Banner bars<small>company strength and morale</small></span><i class="switch"></i></button>
       <button class="row" id="set-full" role="switch"><svg class="icon"><use href="#i-fullscreen"/></svg><span>Fullscreen</span><i class="switch"></i></button>
       <button class="row" id="set-hide"><svg class="icon"><use href="#i-hide"/></svg><span>Hide interface<small>tap the screen or press H to bring it back</small></span></button>
       <dl class="keys">
         <dt>Space</dt><dd>pause</dd><dt>+ −</dt><dd>speed</dd><dt>N</dt><dd>next battle</dd>
         <dt>R</dt><dd>roster</dd><dt>L</dt><dd>recent</dd><dt>S</dt><dd>settings</dd>
-        <dt>M</dt><dd>sound</dd><dt>B</dt><dd>health bars</dd><dt>F</dt><dd>fullscreen</dd><dt>H</dt><dd>hide interface</dd>
+        <dt>M</dt><dd>sound</dd><dt>B</dt><dd>banner bars</dd><dt>F</dt><dd>fullscreen</dd><dt>H</dt><dd>hide interface</dd>
       </dl>
       <p class="version" id="version"></p>
     </aside>
@@ -63,7 +63,7 @@
       <button id="btn-pause" title="Pause (Space)" aria-label="Pause"><svg class="icon"><use href="#i-pause"/></svg></button>
       <button id="btn-speed" title="Simulation speed (+/−)" aria-label="Simulation speed">1×</button>
       <button id="btn-next" title="Next battle (N)" aria-label="Next battle"><svg class="icon"><use href="#i-next"/></svg></button>
-      <button id="btn-roster" title="Fleet roster (R)" aria-label="Fleet roster"><svg class="icon"><use href="#i-roster"/></svg></button>
+      <button id="btn-roster" title="Army roster (R)" aria-label="Army roster"><svg class="icon"><use href="#i-roster"/></svg></button>
       <button id="btn-recent" title="Recent battles (L)" aria-label="Recent battles"><svg class="icon"><use href="#i-recent"/></svg></button>
       <button id="btn-settings" title="Settings (S)" aria-label="Settings"><svg class="icon"><use href="#i-settings"/></svg></button>
     </nav>

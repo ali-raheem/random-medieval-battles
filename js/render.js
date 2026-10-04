@@ -1,22 +1,37 @@
-// Canvas renderer: starfield, nebula, ships, weapons fire and particle effects.
+// Canvas renderer: terrain, soldiers, arrows, banners, corpses and particle effects.
 // Purely cosmetic randomness here uses Math.random — it never feeds back into the sim.
 
 import { createRng } from './rng.js';
-import { mountPos } from './sim.js';
+import { heraldryShapes } from './heraldry.js';
 
-const MAX_PARTICLES = 4000;
+const MAX_PARTICLES = 3000;
+const GROUND_PX = 2048;
 const rand = (a, b) => a + (b - a) * Math.random();
+const hsl = ([h, s, l], a = 1) => `hsl(${h} ${s}% ${l}% / ${a})`;
+
+// Palettes per terrain, as [h, s, l].
+const TERRAIN = {
+  meadow: { base: [96, 34, 33], patch: [[90, 36, 28], [104, 30, 38], [80, 32, 30]], tuft: [100, 40, 22], flowers: ['#f2e27a', '#f4f1e6', '#d98ad0'], tree: [110, 35, 20], dirt: [35, 30, 30] },
+  spring: { base: [105, 42, 38], patch: [[100, 46, 32], [115, 38, 44], [90, 40, 34]], tuft: [105, 48, 26], flowers: ['#fff7a8', '#ffffff', '#f7a8c8', '#b8a8ff'], tree: [115, 40, 22], dirt: [35, 28, 34] },
+  autumn: { base: [58, 30, 32], patch: [[45, 40, 30], [70, 26, 34], [30, 45, 32]], tuft: [50, 35, 22], flowers: ['#d9772a', '#b8452a', '#e0b040'], tree: [28, 55, 28], dirt: [28, 30, 26] },
+  heath: { base: [80, 18, 28], patch: [[290, 18, 30], [75, 22, 24], [60, 20, 32]], tuft: [80, 20, 18], flowers: ['#a070c0', '#c090d8'], tree: [120, 25, 17], dirt: [30, 22, 24] },
+  steppe: { base: [46, 32, 44], patch: [[40, 35, 40], [52, 30, 50], [60, 25, 38]], tuft: [45, 30, 32], flowers: [], tree: null, dirt: [32, 28, 34] },
+  snow: { base: [210, 14, 86], patch: [[210, 12, 80], [200, 10, 92], [215, 16, 76]], tuft: [210, 8, 64], flowers: [], tree: [150, 25, 18], dirt: [30, 12, 46] },
+};
+const HORSE = ['#5a3a22', '#3a2618', '#7a5a3a', '#2a2320', '#8a8378', '#6b4128'];
+const HEADS = ['#8a6a48', '#c49a72', '#5a4636'];
 
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.particles = [];
-    this.pending = []; // delayed secondary explosions
-    this.cam = { x: 0, y: 0, zoom: 0.5 };
+    this.cam = { x: 0, y: 0, zoom: 1 };
     this.showBars = true;
-    this.stars = makeStars();
-    this.nebula = null;
+    this.ground = document.createElement('canvas');
+    this.ground.width = this.ground.height = GROUND_PX;
+    this.gctx = this.ground.getContext('2d');
+    this.palette = TERRAIN.meadow;
     this.resize();
   }
 
@@ -26,49 +41,254 @@ export class Renderer {
     this.h = window.innerHeight;
     this.canvas.width = Math.round(this.w * this.dpr);
     this.canvas.height = Math.round(this.h * this.dpr);
-    // Keep the action clear of the fleet header (top) and controls/feed (bottom).
+    // Keep the action clear of the army header (top) and controls/feed (bottom).
     this.viewTop = this.h > 500 ? 100 : 70;
     this.viewBottom = 60;
     this.viewH = Math.max(100, this.h - this.viewTop - this.viewBottom);
     this.centerY = this.viewTop + this.viewH / 2;
+    this.vignette = null;
   }
 
   reset(state) {
     this.particles = [];
-    this.pending = [];
     this.teams = state.teams;
-    this.nebula = makeNebula(state.seed);
+    this.palette = TERRAIN[state.terrain] ?? TERRAIN.meadow;
+    this.makeGround(state);
     this.fitCamera(state, 1, true);
   }
 
   // --- camera ---------------------------------------------------------------
 
   fitCamera(state, dt, snap = false) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const s of state.ships) {
-      if (!s.alive) continue;
-      minX = Math.min(minX, s.x - s.r); maxX = Math.max(maxX, s.x + s.r);
-      minY = Math.min(minY, s.y - s.r); maxY = Math.max(maxY, s.y + s.r);
+    // Frame the fighting men, ignoring the few stragglers furthest out on each axis.
+    const xs = [], ys = [];
+    for (const s of state.soldiers) {
+      if (!s.alive || s.routing) continue;
+      xs.push(s.x);
+      ys.push(s.y);
     }
-    if (minX === Infinity) return;
-    const pad = 140;
+    if (!xs.length) {
+      for (const s of state.soldiers) {
+        if (!s.alive) continue;
+        xs.push(s.x);
+        ys.push(s.y);
+      }
+    }
+    if (!xs.length) return;
+    xs.sort((a, b) => a - b);
+    ys.sort((a, b) => a - b);
+    const cut = Math.floor(xs.length * 0.03);
+    const minX = xs[cut], maxX = xs[xs.length - 1 - cut];
+    const minY = ys[cut], maxY = ys[ys.length - 1 - cut];
+    const pad = 70;
     const bw = maxX - minX + pad * 2, bh = maxY - minY + pad * 2;
-    const zoom = Math.min(1.6, Math.max(0.12, Math.min(this.w / bw, this.viewH / bh)));
+    const zoom = Math.min(3, Math.max(0.15, Math.min(this.w / bw, this.viewH / bh)));
     const tx = (minX + maxX) / 2, ty = (minY + maxY) / 2;
-    const k = snap ? 1 : Math.min(1, dt * 0.9);
+    const k = snap ? 1 : Math.min(1, dt * 0.8);
     this.cam.x += (tx - this.cam.x) * k;
     this.cam.y += (ty - this.cam.y) * k;
     this.cam.zoom = Math.exp(Math.log(this.cam.zoom) + (Math.log(zoom) - Math.log(this.cam.zoom)) * k);
   }
 
-  // --- events -> particles -------------------------------------------------------
+  // --- the ground: terrain plus everything stamped into it ---------------------
+
+  makeGround(state) {
+    const g = this.gctx;
+    const pal = this.palette;
+    const rng = createRng((state.seed * 2654435761) >>> 0);
+    const E = (this.extent = state.arenaRadius + 350);
+    const k = (this.gk = GROUND_PX / (2 * E));
+    const P = GROUND_PX;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = hsl(pal.base);
+    g.fillRect(0, 0, P, P);
+
+    for (let i = 0; i < 260; i++) {
+      const x = rng.range(0, P), y = rng.range(0, P), r = rng.range(40, 220);
+      const grad = g.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, hsl(rng.pick(pal.patch), rng.range(0.25, 0.5)));
+      grad.addColorStop(1, hsl(pal.base, 0));
+      g.fillStyle = grad;
+      g.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+
+    // A cart track across the field.
+    if (rng.chance(0.6)) {
+      const a = rng.range(0, Math.PI);
+      const c = Math.cos(a), s = Math.sin(a);
+      const off = rng.range(-0.3, 0.3) * E;
+      const pts = [];
+      for (let t = -1.2; t <= 1.2; t += 0.1) {
+        const bend = Math.sin(t * rng.range(1.5, 2.5) + 1) * E * 0.08;
+        pts.push([(t * E * c - (off + bend) * s + E) * k, (t * E * s + (off + bend) * c + E) * k]);
+      }
+      g.lineCap = g.lineJoin = 'round';
+      for (const [w, alpha] of [[16, 0.18], [10, 0.3], [3, 0.2]]) {
+        g.strokeStyle = hsl(pal.dirt, alpha);
+        g.lineWidth = w * k * 2;
+        g.beginPath();
+        pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+        g.stroke();
+      }
+    }
+
+    g.lineWidth = Math.max(1, k * 0.8);
+    g.strokeStyle = hsl(pal.tuft, 0.45);
+    g.beginPath();
+    for (let i = 0; i < 9000; i++) {
+      const x = rng.range(0, P), y = rng.range(0, P);
+      g.moveTo(x, y);
+      g.lineTo(x + rng.range(-2, 2), y - rng.range(2, 5));
+    }
+    g.stroke();
+
+    for (const color of pal.flowers) {
+      g.fillStyle = color;
+      for (let i = 0; i < 350; i++) {
+        const x = rng.range(0, P), y = rng.range(0, P);
+        g.fillRect(x, y, 1.5, 1.5);
+      }
+    }
+
+    // Stones.
+    for (let i = 0; i < 40; i++) {
+      const x = rng.range(0, P), y = rng.range(0, P), r = rng.range(1.5, 4.5);
+      g.fillStyle = 'rgba(0,0,0,0.25)';
+      g.beginPath();
+      g.ellipse(x + 1, y + 1, r, r * 0.7, 0, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = `hsl(40 6% ${rng.range(45, 65)}%)`;
+      g.beginPath();
+      g.ellipse(x, y, r, r * 0.7, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    // Woods around the edge of the field.
+    if (pal.tree) {
+      const clusters = rng.int(5, 10);
+      for (let c = 0; c < clusters; c++) {
+        const a = rng.range(0, Math.PI * 2), d = rng.range(state.arenaRadius * 0.95, E);
+        const cx = (Math.cos(a) * d + E) * k, cy = (Math.sin(a) * d + E) * k;
+        const n = rng.int(6, 22);
+        const trees = [];
+        for (let i = 0; i < n; i++) trees.push([cx + rng.gauss() * 70 * k * 2, cy + rng.gauss() * 70 * k * 2, rng.range(9, 18) * k * 2]);
+        g.fillStyle = 'rgba(0,0,0,0.3)';
+        for (const [x, y, r] of trees) {
+          g.beginPath();
+          g.arc(x + r * 0.35, y + r * 0.35, r, 0, Math.PI * 2);
+          g.fill();
+        }
+        for (const [x, y, r] of trees) {
+          const [h, s, l] = pal.tree;
+          g.fillStyle = hsl([h + rng.range(-8, 8), s, l + rng.range(-4, 4)]);
+          g.beginPath();
+          g.arc(x, y, r, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = hsl([h, s, l + 10], 0.6);
+          g.beginPath();
+          g.arc(x - r * 0.3, y - r * 0.3, r * 0.45, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+    }
+  }
+
+  // Draw on the ground in world units.
+  stamp(x, y, angle, fn) {
+    const g = this.gctx, k = this.gk, E = this.extent;
+    g.setTransform(k, 0, 0, k, (x + E) * k, (y + E) * k);
+    g.rotate(angle);
+    fn(g);
+  }
+
+  stampCorpse(s) {
+    const team = this.teams[s.team];
+    const r = s.r;
+    this.stamp(s.x, s.y, s.angle + rand(-0.8, 0.8), (g) => {
+      g.fillStyle = `rgba(${Math.round(rand(90, 120))}, 12, 10, ${rand(0.35, 0.55)})`;
+      g.beginPath();
+      g.ellipse(rand(-1, 1), rand(-1, 1), r * rand(1, 1.7), r * rand(0.8, 1.3), rand(0, 3), 0, Math.PI * 2);
+      g.fill();
+      if (s.d.type === 'cavalry') {
+        g.fillStyle = HORSE[s.id % HORSE.length];
+        g.beginPath();
+        g.ellipse(0, 0, r * 1.15, r * 0.55, 0, 0, Math.PI * 2);
+        g.fill();
+        g.beginPath();
+        g.ellipse(r * 1.1, r * 0.3, r * 0.4, r * 0.2, 0.6, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = team.mid;
+        g.beginPath();
+        g.ellipse(-r * 0.1, r * 0.95, r * 0.5, r * 0.28, 0, 0, Math.PI * 2);
+        g.fill();
+      } else {
+        g.fillStyle = team.mid;
+        g.beginPath();
+        g.ellipse(0, 0, r * 1.05, r * 0.5, 0, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = HEADS[s.id % 3];
+        g.beginPath();
+        g.arc(r * 1.05, 0, r * 0.38, 0, Math.PI * 2);
+        g.fill();
+        g.strokeStyle = s.d.type === 'spear' ? '#5a4128' : '#8b8f93';
+        g.lineWidth = 0.5;
+        g.beginPath();
+        g.moveTo(-r, r * rand(0.6, 1.2));
+        g.lineTo(r * rand(0.6, 2.2), r * rand(0.8, 1.6));
+        g.stroke();
+      }
+    });
+  }
+
+  stampArrow(x, y, angle) {
+    this.stamp(x, y, angle, (g) => {
+      g.strokeStyle = 'rgba(40, 28, 16, 0.8)';
+      g.lineWidth = 0.45;
+      g.beginPath();
+      g.moveTo(-2.5, 0);
+      g.lineTo(1, 0);
+      g.stroke();
+      g.fillStyle = 'rgba(230, 220, 200, 0.8)';
+      g.fillRect(-2.8, -0.4, 0.8, 0.8);
+    });
+  }
+
+  stampMud(x, y) {
+    this.stamp(x + rand(-3, 3), y + rand(-3, 3), 0, (g) => {
+      g.fillStyle = hsl(this.palette.dirt, 0.05);
+      g.beginPath();
+      g.arc(0, 0, rand(3, 6), 0, Math.PI * 2);
+      g.fill();
+    });
+  }
+
+  // --- events -> particles and stamps ---------------------------------------------
 
   ingest(events) {
     for (const e of events) {
-      if (e.type === 'explosion') this.explode(e.x, e.y, e.r, e.ship);
-      else if (e.type === 'hit') this.sparks(e.x, e.y, e.color, 3 + Math.min(10, e.amount / 4), 1);
-      else if (e.type === 'shield') this.sparks(e.x, e.y, '#9fd8ff', 2 + Math.min(6, e.amount / 6), 0.6);
-      else if (e.type === 'pop') this.pop(e.x, e.y, e.r, e.color);
+      switch (e.type) {
+        case 'clash':
+          if (Math.random() < 0.5) this.sparks(e.x, e.y, 3, '#fff1c0');
+          if (Math.random() < 0.4) this.blood(e.x, e.y, 2);
+          if (Math.random() < 0.3) this.stampMud(e.x, e.y);
+          break;
+        case 'arrowhit':
+          this.blood(e.x, e.y, 2);
+          break;
+        case 'death':
+          this.blood(e.x, e.y, 5);
+          this.stampCorpse(e.soldier);
+          break;
+        case 'miss':
+          this.stampArrow(e.x, e.y, e.angle);
+          break;
+        case 'impact':
+          // A charge onto braced spears ends in a burst of splintered shafts.
+          if (e.kind === 'braced') this.sparks(e.x, e.y, 8, '#c2a676');
+          else this.sparks(e.x, e.y, 6, '#ffe7a0');
+          this.dust(e.x, e.y, 4, 1.4);
+          break;
+      }
     }
     events.length = 0;
   }
@@ -78,44 +298,24 @@ export class Renderer {
     this.particles.push(p);
   }
 
-  sparks(x, y, color, n, speed) {
+  sparks(x, y, n, color) {
     for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2, v = rand(30, 160) * speed;
-      this.add({ t: 'spark', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rand(0.15, 0.45), age: 0, size: rand(0.8, 1.8), color });
+      const a = Math.random() * Math.PI * 2, v = rand(20, 70);
+      this.add({ t: 'spark', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rand(0.08, 0.22), age: 0, size: rand(0.3, 0.6), color });
     }
-    this.add({ t: 'flash', x, y, vx: 0, vy: 0, life: 0.12, age: 0, size: 6 + n, color });
   }
 
-  pop(x, y, r, color) {
-    this.add({ t: 'flash', x, y, vx: 0, vy: 0, life: 0.25, age: 0, size: r * 6, color: '#ffd9a0' });
-    this.sparks(x, y, color, 6, 0.8);
+  blood(x, y, n) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, v = rand(8, 30);
+      this.add({ t: 'blood', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rand(0.2, 0.5), age: 0, size: rand(0.4, 0.9), color: '#8a0e0e' });
+    }
   }
 
-  explode(x, y, r, ship, secondary = false) {
-    const vx = ship ? ship.vx * 0.4 : 0, vy = ship ? ship.vy * 0.4 : 0;
-    this.add({ t: 'flash', x, y, vx, vy, life: 0.35 + r * 0.01, age: 0, size: r * 4, color: '#fff2c8' });
-    this.add({ t: 'ring', x, y, vx, vy, life: 0.5 + r * 0.012, age: 0, size: r * 5, color: '#ffb46a' });
-    const n = Math.min(70, 10 + r * 1.6);
+  dust(x, y, n, size = 1) {
+    const c = this.palette.dirt;
     for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2, v = rand(20, 60 + r * 7);
-      this.add({ t: 'spark', x, y, vx: vx + Math.cos(a) * v, vy: vy + Math.sin(a) * v, life: rand(0.4, 1.3), age: 0, size: rand(1, 2.4), color: Math.random() < 0.5 ? '#ffd07a' : '#ff7a3a' });
-    }
-    for (let i = 0; i < r / 2.5; i++) {
-      const a = Math.random() * Math.PI * 2, v = rand(10, 30 + r * 2);
-      this.add({ t: 'smoke', x, y, vx: vx + Math.cos(a) * v, vy: vy + Math.sin(a) * v, life: rand(1.5, 3.2), age: 0, size: rand(r * 0.3, r * 0.7) + 3, color: '#3a3440' });
-    }
-    if (ship && !secondary) {
-      const team = this.teams?.[ship.team];
-      for (let i = 0; i < r / 3; i++) {
-        const a = Math.random() * Math.PI * 2, v = rand(15, 40 + r * 3);
-        this.add({ t: 'debris', x, y, vx: vx + Math.cos(a) * v, vy: vy + Math.sin(a) * v, life: rand(2, 4), age: 0, size: rand(1.5, 2 + r * 0.12), rot: Math.random() * 6, spin: rand(-6, 6), color: team?.mid ?? '#555' });
-      }
-      if (r >= 18) {
-        const count = Math.round(r / 9);
-        for (let i = 0; i < count; i++) {
-          this.pending.push({ delay: rand(0.1, 0.9), x: x + rand(-r, r) * 0.8, y: y + rand(-r, r) * 0.8, r: r * rand(0.35, 0.6) });
-        }
-      }
+      this.add({ t: 'dust', x: x + rand(-2, 2), y: y + rand(-2, 2), vx: rand(-6, 6), vy: rand(-6, 6), life: rand(0.8, 1.8), age: 0, size: rand(2, 4) * size, color: hsl([c[0], c[1], c[2] + 25]) });
     }
   }
 
@@ -125,26 +325,12 @@ export class Renderer {
     this.fitCamera(state, realDt);
     if (simDt <= 0) return;
 
-    for (const p of this.pending) {
-      p.delay -= simDt;
-      if (p.delay <= 0) this.explode(p.x, p.y, p.r, null, true);
-    }
-    this.pending = this.pending.filter((p) => p.delay > 0);
-
-    // Engine exhaust and damage smoke.
-    for (const s of state.ships) {
-      if (!s.alive) continue;
-      const frac = s.hull / s.maxHull;
-      if (frac < 0.5 && Math.random() < (0.5 - frac) * simDt * 30) {
-        const ox = rand(-0.5, 0.5) * s.r, oy = rand(-0.4, 0.4) * s.r;
-        const fire = Math.random() < 0.35;
-        this.add({ t: fire ? 'spark' : 'smoke', x: s.x + ox, y: s.y + oy, vx: s.vx * 0.3 + rand(-8, 8), vy: s.vy * 0.3 + rand(-8, 8), life: fire ? 0.4 : rand(0.8, 1.6), age: 0, size: fire ? 1.6 : rand(2, 3 + s.r * 0.25), color: fire ? '#ff9a3a' : '#2e2a33' });
-      }
-    }
-    for (const p of state.projectiles) {
-      if (p.kind !== 'missile') continue;
-      if (Math.random() < simDt * 45) {
-        this.add({ t: 'smoke', x: p.x, y: p.y, vx: rand(-5, 5), vy: rand(-5, 5), life: rand(0.35, 0.8), age: 0, size: p.r * 0.9, color: '#6a6470' });
+    // Hooves kick up dust (not in snow, where it would look odd).
+    if (state.terrain !== 'snow') {
+      for (const s of state.soldiers) {
+        if (!s.alive || s.d.type !== 'cavalry') continue;
+        const v = Math.hypot(s.vx, s.vy);
+        if (v > 30 && Math.random() < simDt * 6) this.dust(s.x - s.vx * 0.08, s.y - s.vy * 0.08, 1);
       }
     }
 
@@ -152,10 +338,9 @@ export class Renderer {
       p.age += simDt;
       p.x += p.vx * simDt;
       p.y += p.vy * simDt;
-      const drag = p.t === 'smoke' ? 0.6 : p.t === 'debris' ? 0.3 : 1.8;
+      const drag = p.t === 'dust' ? 1.2 : 4;
       p.vx *= 1 - Math.min(1, drag * simDt);
       p.vy *= 1 - Math.min(1, drag * simDt);
-      if (p.rot !== undefined) p.rot += p.spin * simDt;
     }
     this.particles = this.particles.filter((p) => p.age < p.life);
   }
@@ -166,252 +351,258 @@ export class Renderer {
     const { ctx, dpr, w, h, cam } = this;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = '#03040a';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = hsl(this.palette.base);
     ctx.fillRect(0, 0, w, h);
-    this.drawBackground(state.time);
 
     const z = cam.zoom;
     ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (w / 2 - cam.x * z), dpr * (this.centerY - cam.y * z));
     const px = 1 / z; // one screen pixel in world units
+    const E = this.extent;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.ground, -E, -E, 2 * E, 2 * E);
 
-    this.drawArena(state, px);
-    this.drawParticles(['smoke', 'debris'], px, 'source-over');
-    for (const s of state.ships) if (!s.alive) this.drawWreck(state, s, px);
-    for (const s of state.ships) if (s.alive) this.drawShip(state, s, px);
-    this.drawProjectiles(state, px);
-    this.drawBeams(state, px);
-    this.drawParticles(['spark', 'flash', 'ring'], px, 'lighter');
-    if (this.showBars) for (const s of state.ships) if (s.alive && !s.design.fighter) this.drawBars(s, px);
+    this.drawParticles(['dust'], px, 'source-over');
+    this.drawArrows(state, px, true);
+    const t = state.time;
+    for (const s of state.soldiers) if (s.alive && s.d.type !== 'cavalry') this.drawSoldier(s, t, px);
+    for (const s of state.soldiers) if (s.alive && s.d.type === 'cavalry') this.drawSoldier(s, t, px);
+    this.drawParticles(['blood'], px, 'source-over');
+    this.drawParticles(['spark'], px, 'lighter');
+    this.drawArrows(state, px, false);
+    this.drawBanners(state, px);
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
+    this.drawVignette();
   }
 
-  drawBackground(time) {
-    const { ctx, w, h, cam } = this;
-    if (this.nebula) {
-      const n = this.nebula;
-      const scale = Math.max(w, h) * 1.6 / n.width;
-      const ox = -cam.x * 0.02, oy = -cam.y * 0.02;
-      ctx.globalAlpha = 0.9;
-      ctx.drawImage(n, w / 2 - (n.width * scale) / 2 + ox, h / 2 - (n.height * scale) / 2 + oy, n.width * scale, n.height * scale);
-      ctx.globalAlpha = 1;
+  drawVignette() {
+    const { ctx, w, h } = this;
+    if (!this.vignette) {
+      const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.hypot(w, h) * 0.6);
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(10,6,2,0.55)');
+      this.vignette = g;
     }
-    for (const layer of this.stars) {
-      const ox = -cam.x * cam.zoom * layer.depth, oy = -cam.y * cam.zoom * layer.depth;
-      ctx.fillStyle = layer.color;
-      for (const s of layer.points) {
-        const x = (((s.x * w + ox) % w) + w) % w;
-        const y = (((s.y * h + oy) % h) + h) % h;
-        ctx.globalAlpha = s.a * (0.75 + 0.25 * Math.sin(time * s.tw + s.ph));
-        ctx.fillRect(x, y, layer.size, layer.size);
+    ctx.fillStyle = this.vignette;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  drawSoldier(s, t, px) {
+    const { ctx } = this;
+    const team = this.teams[s.team];
+    const d = s.d;
+    const r = s.r;
+    const flash = t - s.hitT < 0.1;
+    const bodyColor = flash ? '#ffffff' : s.routing ? team.mid : team.color;
+
+    if (r / px < 1.6) {
+      // Too small for detail: a coloured speck (a longer one for horsemen).
+      ctx.fillStyle = bodyColor;
+      const m = Math.max(r * 1.4, 1.3 * px);
+      if (d.type === 'cavalry') {
+        const c = Math.cos(s.angle), sn = Math.sin(s.angle);
+        ctx.fillRect(s.x - m * 0.5 - Math.abs(c) * m * 0.4, s.y - m * 0.5 - Math.abs(sn) * m * 0.4, m + Math.abs(c) * m * 0.8, m + Math.abs(sn) * m * 0.8);
+      } else {
+        ctx.fillRect(s.x - m / 2, s.y - m / 2, m, m);
       }
+      return;
     }
-    ctx.globalAlpha = 1;
-  }
 
-  drawArena(state, px) {
-    const { ctx } = this;
-    ctx.strokeStyle = 'rgba(120, 150, 255, 0.07)';
-    ctx.lineWidth = px;
-    ctx.setLineDash([12 * px, 18 * px]);
-    ctx.beginPath();
-    ctx.arc(0, 0, state.arenaRadius + 150, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  shipPath(shape) {
-    const { ctx } = this;
-    ctx.beginPath();
-    shape.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.closePath();
-  }
-
-  drawShip(state, s, px) {
-    const { ctx } = this;
-    const team = state.teams[s.team];
-    const shape = s.design.shape;
-    const r = Math.max(s.r, 3.5 * px);
     ctx.save();
     ctx.translate(s.x, s.y);
     ctx.rotate(s.angle);
-    ctx.scale(r, r);
-
-    // Engine flames (additive).
-    ctx.globalCompositeOperation = 'lighter';
-    const flick = 0.75 + Math.random() * 0.35;
-    const len = (0.4 + s.thrust * 0.9) * flick;
-    for (const [ex, ey] of shape.engines) {
-      const g = ctx.createLinearGradient(ex, ey, ex - len, ey);
-      g.addColorStop(0, team.light);
-      g.addColorStop(0.3, team.color);
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.moveTo(ex + 0.05, ey - 0.13);
-      ctx.lineTo(ex - len, ey);
-      ctx.lineTo(ex + 0.05, ey + 0.13);
-      ctx.fill();
-    }
-    ctx.globalCompositeOperation = 'source-over';
-
-    this.shipPath(shape);
-    ctx.fillStyle = team.dark;
-    ctx.fill();
-    ctx.lineWidth = (1.3 * px) / r;
-    ctx.strokeStyle = team.color;
-    ctx.stroke();
-
-    // Superstructure.
-    if (r / px > 8) {
-      ctx.save();
-      ctx.scale(shape.deck, shape.deck);
-      this.shipPath(shape);
-      ctx.restore();
-      ctx.fillStyle = team.mid;
-      ctx.fill();
-      ctx.fillStyle = team.light;
-      for (const w of s.weapons) {
-        const [mx, my] = w.spec.mount;
-        ctx.beginPath();
-        ctx.arc(mx, my, 0.07, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-    ctx.restore();
-
-    // Shield flare facing the last hit.
-    const since = state.time - s.shieldHitT;
-    if (s.shieldHitT >= 0 && since < 0.35 && s.maxShield > 0) {
-      const a = 1 - since / 0.35;
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.strokeStyle = `rgba(130, 200, 255, ${0.7 * a})`;
-      ctx.lineWidth = Math.max(1.5 * px, r * 0.08);
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, r * 1.35, s.shieldHitA - 0.9, s.shieldHitA + 0.9);
-      ctx.stroke();
-      ctx.strokeStyle = `rgba(130, 200, 255, ${0.12 * a})`;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, r * 1.35, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalCompositeOperation = 'source-over';
-    }
-  }
-
-  drawWreck(state, s, px) {
-    const since = state.time - s.deathT;
-    if (since > 5) return;
-    const { ctx } = this;
-    const r = Math.max(s.r, 3.5 * px);
-    ctx.save();
-    ctx.globalAlpha = Math.max(0, 1 - since / 5) * 0.8;
-    ctx.translate(s.x + s.vx * since * 0.3, s.y + s.vy * since * 0.3);
-    ctx.rotate(s.angle + since * ((s.id % 7) - 3) * 0.06);
-    ctx.scale(r, r);
-    this.shipPath(s.design.shape);
-    ctx.fillStyle = '#15121a';
-    ctx.fill();
-    ctx.lineWidth = px / r;
-    ctx.strokeStyle = '#4a3a30';
-    ctx.stroke();
-    ctx.restore();
-    ctx.globalAlpha = 1;
-  }
-
-  drawBars(s, px) {
-    const { ctx } = this;
-    const w = Math.max(s.r * 1.6, 18 * px);
-    const hgt = 2.2 * px;
-    const x = s.x - w / 2, y = s.y + Math.max(s.r, 3.5 * px) + 6 * px;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(x - px, y - px, w + 2 * px, hgt * 2 + 3 * px);
-    const hf = s.hull / s.maxHull;
-    ctx.fillStyle = hf > 0.6 ? '#5fe08a' : hf > 0.3 ? '#f0c040' : '#ff5a4a';
-    ctx.fillRect(x, y, w * hf, hgt);
-    if (s.maxShield > 0) {
-      ctx.fillStyle = '#6cc4ff';
-      ctx.fillRect(x, y + hgt + px, w * (s.shield / s.maxShield), hgt);
-    }
-  }
-
-  drawProjectiles(state, px) {
-    const { ctx } = this;
-    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = Math.max(0.35, px * 0.8);
     ctx.lineCap = 'round';
-    for (const p of state.projectiles) {
-      const spec = p.spec;
-      if (p.kind === 'missile') {
-        const size = Math.max(p.r, 1.5 * px);
-        const torp = spec.type === 'torpedo';
-        if (torp) {
-          const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, size * 3);
-          g.addColorStop(0, '#ffffff');
-          g.addColorStop(0.3, spec.color);
-          g.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = g;
+    const armed = !s.routing;
+    const swing = t - s.strikeT < 0.3 ? (t - s.strikeT) / 0.3 : -1;
+
+    if (d.type === 'cavalry') {
+      const coat = HORSE[s.id % HORSE.length];
+      ctx.fillStyle = coat;
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.1, 0, r * 1.05, r * 0.46, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(r * 1.0, 0, r * 0.42, r * 0.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = coat;
+      ctx.beginPath();
+      ctx.moveTo(-r * 1.1, 0);
+      ctx.lineTo(-r * 1.5, Math.sin(t * 9 + s.id) * r * 0.15);
+      ctx.stroke();
+      // Caparison or saddle cloth in the army's colours.
+      ctx.fillStyle = team.color;
+      ctx.globalAlpha = s.routing ? 0.6 : 0.95;
+      ctx.beginPath();
+      if (d.lance) ctx.ellipse(-r * 0.1, 0, r * 0.8, r * 0.52, 0, 0, Math.PI * 2);
+      else ctx.ellipse(-r * 0.15, 0, r * 0.38, r * 0.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      if (armed) {
+        if (d.lance) {
+          const couched = s.reg.phase === 'charge';
+          ctx.strokeStyle = '#c2a676';
+          ctx.lineWidth = Math.max(0.45, px * 0.8);
           ctx.beginPath();
-          ctx.arc(p.x, p.y, size * 3, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.moveTo(-r * 0.4, r * 0.3);
+          ctx.lineTo(couched ? r * 2.6 : r * 0.9, couched ? r * 0.2 : r * 0.35);
+          ctx.stroke();
         } else {
-          ctx.strokeStyle = spec.color;
-          ctx.lineWidth = Math.max(size * 0.8, 1.2 * px);
-          ctx.beginPath();
-          ctx.moveTo(p.x, p.y);
-          ctx.lineTo(p.x - Math.cos(p.angle) * size * 3, p.y - Math.sin(p.angle) * size * 3);
-          ctx.stroke();
-        }
-      } else {
-        const speed = Math.hypot(p.vx, p.vy);
-        const tail = spec.type === 'railgun' ? 70 : spec.type === 'plasma' ? p.r * 2.5 : 9;
-        const tx = p.x - (p.vx / speed) * tail, ty = p.y - (p.vy / speed) * tail;
-        ctx.strokeStyle = spec.color;
-        ctx.lineWidth = Math.max(p.r * (spec.type === 'plasma' ? 1.6 : 1), 1.2 * px);
-        ctx.beginPath();
-        ctx.moveTo(tx, ty);
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-        if (spec.type === 'plasma' || spec.type === 'railgun') {
-          ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-          ctx.lineWidth = Math.max(p.r * 0.5, 0.8 * px);
-          ctx.stroke();
+          this.drawBlade(r * 0.1, r * 0.4, r * 1.2, swing);
         }
       }
+      ctx.fillStyle = bodyColor;
+      ctx.strokeStyle = team.dark;
+      ctx.lineWidth = Math.max(0.3, px * 0.6);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.3, r * 0.42, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = d.armor > 0.3 ? '#a4a9ad' : HEADS[s.id % 3];
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.24, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
     }
-    ctx.globalCompositeOperation = 'source-over';
+
+    if (armed && d.type === 'spear') {
+      const thrust = swing >= 0 ? Math.sin(swing * Math.PI) * 3 : 0;
+      const tipX = d.reach * 0.95 + thrust;
+      ctx.strokeStyle = '#6b4f32';
+      ctx.lineWidth = Math.max(0.4, px * 0.7);
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.6 + thrust, r * 0.5);
+      ctx.lineTo(tipX, r * 0.42);
+      ctx.stroke();
+      ctx.fillStyle = '#d5d8da';
+      ctx.beginPath();
+      ctx.moveTo(tipX + 1.6, r * 0.42);
+      ctx.lineTo(tipX - 0.4, r * 0.42 - 0.5);
+      ctx.lineTo(tipX - 0.4, r * 0.42 + 0.5);
+      ctx.fill();
+    }
+    if (armed && d.type === 'sword') this.drawBlade(r * 0.2, r * 0.65, r * 1.6, swing);
+
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = team.dark;
+    ctx.lineWidth = Math.max(0.3, px * 0.6);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.6, r * 0.95, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    if (armed && d.shield > 0) {
+      const big = d.shield >= 0.4;
+      ctx.fillStyle = team.heraldry.metal;
+      ctx.beginPath();
+      ctx.ellipse(r * 0.45, -r * 0.72, r * (big ? 0.3 : 0.24), r * (big ? 0.66 : 0.45), 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    if (armed && d.type === 'archer') {
+      ctx.strokeStyle = '#7a5530';
+      ctx.lineWidth = Math.max(0.4, px * 0.8);
+      if (d.ranged.bolt) {
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(r * 1.4, 0);
+        ctx.moveTo(r * 1.2, -r * 0.6);
+        ctx.lineTo(r * 1.2, r * 0.6);
+        ctx.stroke();
+      } else {
+        const drawn = s.shot >= 0;
+        const bx = r * 0.3, br = r * 1.0, a0 = 1.15;
+        ctx.beginPath();
+        ctx.arc(bx, 0, br, -a0, a0);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(235,225,200,0.7)';
+        ctx.lineWidth = Math.max(0.2, px * 0.5);
+        ctx.beginPath();
+        const ex = bx + Math.cos(a0) * br, ey = Math.sin(a0) * br;
+        ctx.moveTo(ex, -ey);
+        ctx.lineTo(drawn ? -r * 0.4 : ex, 0);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+      }
+    }
+
+    ctx.fillStyle = d.armor > 0.3 ? '#a4a9ad' : HEADS[s.id % 3];
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
-  drawBeams(state, px) {
+  // A blade held at (x, y) in the soldier's frame; swings through an arc mid-strike.
+  drawBlade(x, y, len, swing) {
     const { ctx } = this;
-    ctx.globalCompositeOperation = 'lighter';
+    const a = swing >= 0 ? -1.3 + swing * 2.2 : -0.35;
+    ctx.strokeStyle = '#dfe3e6';
+    ctx.lineWidth = Math.max(0.45, ctx.lineWidth);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
+    ctx.stroke();
+  }
+
+  // Arrows fly in an arc: the shadow tracks the ground, the shaft is lifted by height.
+  drawArrows(state, px, shadows) {
+    const { ctx } = this;
     ctx.lineCap = 'round';
-    for (const b of state.beams) {
-      const [x0, y0] = mountPos(b.from, b.mount);
-      const x1 = b.to.x + b.ox, y1 = b.to.y + b.oy;
-      const f = b.ttl / b.life;
-      const width = b.spec.width * (0.4 + 0.6 * f);
-      ctx.globalAlpha = Math.min(1, f * 1.5);
-      ctx.strokeStyle = b.spec.color;
-      ctx.lineWidth = Math.max(width * 2.4, 2 * px);
-      ctx.globalAlpha *= 0.35;
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
+    ctx.lineWidth = Math.max(0.45, px * 0.9);
+    ctx.strokeStyle = shadows ? 'rgba(0,0,0,0.22)' : '#efe4c8';
+    ctx.beginPath();
+    for (const a of state.arrows) {
+      const f = Math.min(1, a.t / a.dur);
+      const f0 = Math.max(0, f - 0.03);
+      const lift = shadows ? 0 : 0.7;
+      const p = (q) => [
+        a.x0 + (a.x1 - a.x0) * q,
+        a.y0 + (a.y1 - a.y0) * q - 4 * a.h * q * (1 - q) * lift,
+      ];
+      const [x1, y1] = p(f), [x0, y0] = p(f0);
+      const dx = x1 - x0, dy = y1 - y0;
+      const len = Math.hypot(dx, dy) || 1;
+      const L = a.bolt ? 3 : 4.5;
+      ctx.moveTo(x1 - (dx / len) * L, y1 - (dy / len) * L);
       ctx.lineTo(x1, y1);
+    }
+    ctx.stroke();
+  }
+
+  drawBanners(state, px) {
+    const { ctx } = this;
+    const H = 20 * px, fw = 13 * px, fh = 9 * px;
+    for (const reg of state.regiments) {
+      if (!reg.alive || reg.routed) continue;
+      const team = this.teams[reg.team];
+      const bx = reg.cx, by = reg.cy;
+      ctx.strokeStyle = '#2b2118';
+      ctx.lineWidth = 1.4 * px;
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx, by - H);
       ctx.stroke();
-      ctx.globalAlpha = Math.min(1, f * 1.5);
-      ctx.lineWidth = Math.max(width * 0.8, px);
-      ctx.stroke();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = Math.max(width * 0.3, 0.6 * px);
-      ctx.stroke();
-      if (b.hit) {
-        ctx.fillStyle = b.spec.color;
-        ctx.beginPath();
-        ctx.arc(x1, y1, Math.max(width * 1.6, 2 * px), 0, Math.PI * 2);
-        ctx.fill();
+      drawFlag(ctx, bx, by - H, fw, fh, team.heraldry, state.time + reg.id);
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = px;
+      ctx.strokeRect(bx, by - H, fw, fh);
+      if (this.showBars) {
+        const y = by - H + fh + 2 * px;
+        const bw = fw;
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(bx - px, y - px, bw + 2 * px, 6 * px);
+        ctx.fillStyle = team.light;
+        ctx.fillRect(bx, y, bw * (reg.alive / reg.count), 2 * px);
+        ctx.fillStyle = '#e8c26a';
+        ctx.fillRect(bx, y + 3 * px, bw * Math.max(0, reg.morale), 1.6 * px);
       }
     }
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
   }
 
   drawParticles(types, px, mode) {
@@ -423,42 +614,23 @@ export class Renderer {
       if (p.t === 'spark') {
         ctx.globalAlpha = 1 - f;
         ctx.strokeStyle = p.color;
-        ctx.lineWidth = Math.max(p.size, px);
+        ctx.lineWidth = Math.max(p.size, px * 0.8);
         ctx.beginPath();
         ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x - p.vx * 0.04, p.y - p.vy * 0.04);
+        ctx.lineTo(p.x - p.vx * 0.03, p.y - p.vy * 0.03);
         ctx.stroke();
-      } else if (p.t === 'flash') {
-        const rad = Math.max(p.size * (0.6 + f * 0.6), 2 * px);
-        const g = this.ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rad);
-        g.addColorStop(0, p.color);
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.globalAlpha = 1 - f;
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (p.t === 'ring') {
-        ctx.globalAlpha = (1 - f) * 0.6;
-        ctx.strokeStyle = p.color;
-        ctx.lineWidth = Math.max(p.size * 0.06 * (1 - f), px);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * Math.sqrt(f), 0, Math.PI * 2);
-        ctx.stroke();
-      } else if (p.t === 'smoke') {
-        ctx.globalAlpha = 0.5 * (1 - f);
+      } else if (p.t === 'blood') {
+        ctx.globalAlpha = 0.9 * (1 - f);
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * (0.6 + f), 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, Math.max(p.size, px * 0.7), 0, Math.PI * 2);
         ctx.fill();
-      } else if (p.t === 'debris') {
-        ctx.globalAlpha = 1 - f * f;
+      } else if (p.t === 'dust') {
+        ctx.globalAlpha = 0.28 * (1 - f);
         ctx.fillStyle = p.color;
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.rotate(p.rot);
-        ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
-        ctx.restore();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * (0.6 + f * 1.4), 0, Math.PI * 2);
+        ctx.fill();
       }
     }
     ctx.globalAlpha = 1;
@@ -466,39 +638,26 @@ export class Renderer {
   }
 }
 
-function makeStars() {
-  const layers = [
-    { depth: 0.03, size: 1, count: 220, color: '#8a93b8', alpha: [0.25, 0.6] },
-    { depth: 0.08, size: 1.5, count: 90, color: '#c8d2ff', alpha: [0.4, 0.8] },
-    { depth: 0.16, size: 2, count: 30, color: '#ffffff', alpha: [0.6, 1] },
-  ];
-  return layers.map((l) => ({
-    ...l,
-    points: Array.from({ length: l.count }, () => ({
-      x: Math.random(), y: Math.random(),
-      a: rand(l.alpha[0], l.alpha[1]),
-      tw: rand(0.5, 3), ph: Math.random() * 6.28,
-    })),
-  }));
-}
-
-// A small offscreen canvas of soft coloured clouds, scaled up behind everything.
-function makeNebula(seed) {
-  const rng = createRng((seed * 2654435761) >>> 0);
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const ctx = c.getContext('2d');
-  const baseHue = rng.range(0, 360);
-  const blobs = rng.int(4, 9);
-  ctx.globalCompositeOperation = 'lighter';
-  for (let i = 0; i < blobs; i++) {
-    const x = rng.range(0, 256), y = rng.range(0, 256), r = rng.range(50, 140);
-    const hue = (baseHue + rng.range(-50, 50) + 360) % 360;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, `hsla(${hue}, 70%, 45%, ${rng.range(0.08, 0.2)})`);
-    g.addColorStop(1, 'hsla(0, 0%, 0%, 0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 256, 256);
+// A banner at (x, y) (top-left, hanging right of the pole), rippling slightly.
+function drawFlag(ctx, x, y, w, h, her, t) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.fillStyle = her.field;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = her.metal;
+  for (const poly of heraldryShapes(her.pattern)) {
+    ctx.beginPath();
+    poly.forEach(([u, v], i) => (i ? ctx.lineTo(x + u * w, y + v * h) : ctx.moveTo(x + u * w, y + v * h)));
+    ctx.closePath();
+    ctx.fill();
   }
-  return c;
+  // Ripple shading.
+  for (let i = 0; i < 3; i++) {
+    const sx = x + ((i + 0.5 + Math.sin(t * 3 + i) * 0.2) / 3) * w;
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.fillRect(sx, y, w / 9, h);
+  }
+  ctx.restore();
 }

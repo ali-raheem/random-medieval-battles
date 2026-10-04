@@ -1,5 +1,5 @@
 // Seeded PRNG (mulberry32). Every battle is fully determined by its 32-bit seed,
-// so a seed in the URL replays the same fleets and the same fight.
+// so a seed in the URL replays the same armies and the same fight.
 
 export function createRng(seed) {
   let a = seed >>> 0;
