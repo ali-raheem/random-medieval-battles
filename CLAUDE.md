@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Random Medieval Battles: an endless, hands-off procedurally generated battle viewer (spearmen, swordsmen, archers, cavalry), shipped as an offline PWA. There is no build step and there are no dependencies. The code is plain ES modules loaded straight from `index.html`. It began as a copy of Random Space Battles (`../RSB`), and its app shell (`app.js` loop, panels, `recent.js`, `sw.js`, `bump.mjs`) is still structurally the same.
 
-(The parent `../CLAUDE.md` describes an unrelated Rust/Fallout project. Ignore it here.)
+(The parent `../CLAUDE.md` describes the shoryuken.me workspace and its shared-origin rules; the one above that, `~/Workspace/CLAUDE.md`, is an unrelated Rust/Fallout project. Ignore that one here.)
 
 ## Commands
 
@@ -52,10 +52,18 @@ A battle is fully determined by its seed. Reloading the `#seed=` URL has to repl
 ## Conventions and gotchas
 
 - **Adding or renaming a file:** add it to `ASSETS` in `sw.js` (`tests/assets.test.mjs` fails otherwise). The cache name comes from `VERSION`, because app.js registers `sw.js?v=<VERSION>`, so run `npm run bump` to force installed copies onto a clean cache.
-- **Shared origin with the space app:** this app may be hosted on the same origin as Random Space Battles. That's why the manifest `id` is `/rmb/index.html` (never change it once installs exist), `localStorage` keys use the `rmb.` prefix, and `sw.js` deletes only caches with its own `rmb-` prefix. Keep all three distinct from the space app's `rsb` equivalents.
+- **Shared origin:** this app lives on shoryuken.me next to other PWAs, including Random Space Battles. That's why the manifest `id` is `/rmb/index.html` (never change it once installs exist), `localStorage` keys use the `rmb.` prefix, and `sw.js` deletes only caches with its own `rmb-` prefix. Keep all three distinct from the space app's `rsb` equivalents. Also, `sw.js` handles only requests inside `self.registration.scope`, reads and writes only its own cache (`caches.open(CACHE_NAME)`, never `caches.match()`, which searches every app's caches), precaches with `cache: 'reload'` and fetches with `cache: 'no-cache'` so Cloudflare's 4 h max-age on JS/CSS can't serve stale code after a deploy.
 - **Icons:** the UI uses the inline SVG sprite at the top of `index.html` (24×24 `<symbol id="i-…">`, stroked in `currentColor` and styled by `.icon`). Don't use emoji. Swap an icon with `useIcon(button, name)` in app.js. The PNG app icons are rendered from `icons/icon.svg` with ImageMagick (`convert -density 384 …`), and its SVG renderer ignores `clipPath`, so keep that file clip-free.
 - **Touch:** the HUD fades when idle, and the click after a tap that wakes it is swallowed on purpose, so invisible buttons can't be pressed. Keep control-bar buttons at 38 px or more, and keep the bar within 288 px so it fits on a 320 px phone.
 - **Tuning pacing:** `MELEE_SCALE` / `RANGED_SCALE` in `gen.js` (lower means longer battles), the morale constants in `sim.js` (`BREAK_MORALE`, `ARMY_BROKEN`, the per-casualty loss in `kill()`, the rout shock in `rout()`), and `TIME_LIMIT`. HP and damage are both scaled ×5 relative to the original tuning so that the roster shows readable numbers. Change them together, or the balance shifts.
 - **Formation tuning:** `FORM_MIN`, `BRACE_MIN`, `FRONT_ARC` and `BREAK_RANKS` at the top of `sim.js`, the line bonuses in `strike()`, and the cohesion tolerance in `updateRegiment()`. To see cohesion during a fight, trace `reg.cohesion` / `reg.engaged` over time for a few regiments. Healthy behaviour is that engaged blocks hold about 0.8 until they're flanked. If cohesion drops to around 0 within seconds of a frontal clash, something is distorting the block's shape.
 - **Unit types:** the four keys `spear`/`sword`/`archer`/`cavalry` are referenced across `gen.js` (deployment, `BONUS`), `sim.js` (`PREF`, per-type regiment goals) and `render.js` (per-type drawing). Variants only tweak stats through `mul`/`add` plus a few flags (`bolt`, `pierce`, `lance`, `shield`). The tests require exactly the archers to have `ranged` and exactly the cavalry to have `charge`.
 - `tests/sim.test.mjs` covers generation validity across 200 seeds, determinism and the rule that every battle ends within `TIME_LIMIT`. Run it after any balance or sim change. For balance work, a scratch script that runs ~60 seeds and prints battle-length percentiles and win rates per doctrine is more informative than the tests. Aim for a median of about 60–90 s, no timeouts, and doctrines within about 30–70%.
+
+## Deployment
+
+Live at https://shoryuken.me/rmb/ (`/var/www/shoryuken.me/rmb/`; see the server's `/var/www/shoryuken.me/CLAUDE.md`). After `npm test` and `npm run bump`, ship only the served files:
+
+```bash
+rsync -a --delete --chmod=D755,F644 index.html manifest.webmanifest sw.js css js icons root@185.163.204.17:/var/www/shoryuken.me/rmb/
+```
