@@ -1,5 +1,14 @@
 # Random Medieval Battles
 
+[![CI](https://github.com/ali-raheem/random-medieval-battles/actions/workflows/ci.yml/badge.svg)](https://github.com/ali-raheem/random-medieval-battles/actions/workflows/ci.yml) [![GitHub Pages](https://github.com/ali-raheem/random-medieval-battles/actions/workflows/pages.yml/badge.svg)](https://github.com/ali-raheem/random-medieval-battles/actions/workflows/pages.yml)
+
+**▶ Try it live: [shoryuken.me/rmb](https://shoryuken.me/rmb/)** · mirror on [GitHub Pages](https://ali-raheem.github.io/random-medieval-battles/) · installable, works offline
+
+<p align="center">
+  <a href="https://shoryuken.me/rmb/"><img src="docs/screenshots/desktop.webp" alt="Random Medieval Battles on a desktop browser" width="74%"></a>
+  <a href="https://shoryuken.me/rmb/"><img src="docs/screenshots/mobile.webp" alt="Random Medieval Battles on a phone" width="22%"></a>
+</p>
+
 An endless, hands-off medieval battle generator. Each battle pits two (sometimes three)
 procedurally generated armies of spearmen, swordsmen, archers and cavalry against each
 other. When one side is dead or fled, a victory banner shows and a brand new battle
